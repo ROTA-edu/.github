@@ -1,0 +1,108 @@
+name: 'AI Code Review'
+description: 'Automated code review using Claude AI'
+author: 'ROTA Team'
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key for Claude'
+    required: true
+  focus-areas:
+    description: 'Comma-separated list of focus areas (security,performance,testing,documentation)'
+    required: false
+    default: 'security,performance,testing'
+  github-token:
+    description: 'GitHub token for posting comments'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get PR diff
+      id: diff
+      shell: bash
+      run: |
+        # Get PR number
+        PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+
+        # Get diff
+        gh pr diff $PR_NUMBER > pr.diff
+
+        # Check if diff is too large (Claude has token limits)
+        DIFF_SIZE=$(wc -c < pr.diff)
+        if [ $DIFF_SIZE -gt 100000 ]; then
+          echo "⚠️ Diff too large ($DIFF_SIZE bytes), truncating..."
+          head -c 100000 pr.diff > pr.diff.truncated
+          mv pr.diff.truncated pr.diff
+        fi
+
+        echo "diff-size=$DIFF_SIZE" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: AI Code Review
+      id: review
+      shell: bash
+      run: |
+        DIFF_CONTENT=$(cat pr.diff)
+        PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+
+        # Call Claude API for code review
+        REVIEW=$(cat <<EOF | curl -s https://api.anthropic.com/v1/messages \
+          -H "x-api-key: ${{ inputs.anthropic-api-key }}" \
+          -H "anthropic-version: 2023-06-01" \
+          -H "content-type: application/json" \
+          -d @- | jq -r '.content[0].text'
+        {
+          "model": "claude-3-5-sonnet-20241022",
+          "max_tokens": 2048,
+          "messages": [{
+            "role": "user",
+            "content": "You are a senior code reviewer for ROTA Education. Review this Pull Request diff and provide feedback.\n\nFocus Areas: ${{ inputs.focus-areas }}\n\n## Instructions\n\n1. **Security:** Look for XSS, SQL injection, prompt injection, exposed secrets\n2. **Performance:** Identify N+1 queries, inefficient algorithms, memory leaks\n3. **Testing:** Check if new code has tests, suggest test cases if missing\n4. **Documentation:** Ensure complex logic has comments/JSDoc\n5. **Code Quality:** DRY violations, code smells, TypeScript type safety\n\n## Output Format\n\nProvide your review in this format:\n\n### ✅ Looks Good\n- List what was done well\n\n### ⚠️ Issues Found\n- **[Severity: High/Medium/Low]** Issue description\n  - File: path/to/file.ts:line\n  - Recommendation: How to fix\n\n### 💡 Suggestions\n- Optional improvements\n\n### 🧪 Missing Tests\n- Test cases that should be added\n\n---\n\n## PR Diff\n\n\`\`\`diff\n$DIFF_CONTENT\n\`\`\`"
+          }]
+        }
+        EOF
+        )
+
+        # Save review to file
+        echo "$REVIEW" > review.md
+        echo "review-file=review.md" >> $GITHUB_OUTPUT
+
+        # Check if issues found
+        if echo "$REVIEW" | grep -q "\*\*\[Severity: High\]"; then
+          echo "has-high-severity=true" >> $GITHUB_OUTPUT
+        else
+          echo "has-high-severity=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Post review comment
+      shell: bash
+      run: |
+        PR_NUMBER=$(jq --raw-output .pull_request.number "$GITHUB_EVENT_PATH")
+        REVIEW=$(cat review.md)
+
+        # Post comment on PR
+        gh pr comment $PR_NUMBER --body "## 🤖 AI Code Review (Claude 3.5 Sonnet)
+
+$REVIEW
+
+---
+*This review was generated automatically. Please use your judgment and don't blindly follow all suggestions.*"
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: Fail if high severity issues
+      if: steps.review.outputs.has-high-severity == 'true'
+      shell: bash
+      run: |
+        echo "❌ High severity issues found in code review"
+        echo "Please address the security/critical issues before merging"
+        exit 1
+
+outputs:
+  review-file:
+    description: 'Path to review markdown file'
+    value: ${{ steps.review.outputs.review-file }}
+  has-high-severity:
+    description: 'Whether high severity issues were found'
+    value: ${{ steps.review.outputs.has-high-severity }}

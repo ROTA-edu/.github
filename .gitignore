@@ -1,0 +1,20 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temporary files
+.tmp/
+.temp/
+*.bak
+
+# Node (if we add any scripts)
+node_modules/

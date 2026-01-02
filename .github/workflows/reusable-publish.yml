@@ -1,0 +1,147 @@
+name: Reusable Publish
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '18'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      generate-changelog:
+        description: 'Whether to generate changelog with AI'
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: 'Anthropic API key for AI changelog generation'
+        required: false
+
+permissions:
+  contents: write  # For creating releases
+  packages: write  # For publishing to GitHub Packages
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@rota-edu'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install pnpm
+        run: corepack prepare pnpm@latest --activate
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Run CI checks
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          pnpm lint
+          pnpm type-check
+          pnpm test
+
+      - name: Build package
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm build
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Publishing version: $VERSION"
+
+      - name: Publish to GitHub Packages
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Changelog (AI)
+        if: ${{ inputs.generate-changelog && secrets.ANTHROPIC_API_KEY != '' }}
+        id: changelog
+        run: |
+          # Get previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "No previous tag found, using initial commit"
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+
+          echo "Comparing $PREVIOUS_TAG...HEAD"
+
+          # Get commit messages
+          COMMITS=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+
+          # Generate changelog with AI (using Claude API)
+          CHANGELOG=$(cat <<EOF | curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d @- | jq -r '.content[0].text'
+          {
+            "model": "claude-3-5-sonnet-20241022",
+            "max_tokens": 1024,
+            "messages": [{
+              "role": "user",
+              "content": "Generate a professional changelog for version ${{ steps.version.outputs.version }} based on these commits:\n\n$COMMITS\n\nFormat:\n## v${{ steps.version.outputs.version }}\n\n### ✨ Features\n- ...\n\n### 🐛 Bug Fixes\n- ...\n\n### 🔧 Improvements\n- ...\n\n### ⚠️ Breaking Changes\n- ...\n\nBe concise and user-friendly."
+            }]
+          }
+          EOF
+          )
+
+          echo "$CHANGELOG" > CHANGELOG.md
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate Simple Changelog (fallback)
+        if: ${{ inputs.generate-changelog && secrets.ANTHROPIC_API_KEY == '' }}
+        id: changelog-simple
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          COMMITS=$(git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges)
+
+          CHANGELOG="## v${{ steps.version.outputs.version }}\n\n$COMMITS"
+          echo "$CHANGELOG" > CHANGELOG.md
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: v${{ steps.version.outputs.version }}
+          body: ${{ steps.changelog.outputs.changelog || steps.changelog-simple.outputs.changelog }}
+          draft: false
+          prerelease: false
+
+      - name: Notify success
+        run: |
+          echo "✅ Successfully published @rota-edu/$(jq -r '.name' package.json)@${{ steps.version.outputs.version }}"
+          echo "📦 Package: https://github.com/orgs/ROTA-edu/packages"
+          echo "🎉 Release: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}"
