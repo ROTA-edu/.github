@@ -48,6 +48,9 @@ runs:
         FILE_COUNT=$(echo "$FILES" | wc -l)
         echo "file-count=$FILE_COUNT" >> $GITHUB_OUTPUT
 
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
     - name: Scan Files for Bugs
       shell: bash
       run: |
@@ -126,6 +129,11 @@ runs:
       if: inputs.scan-mode == 'pr'
       shell: bash
       run: |
+        if [ ! -f bug-report.md ]; then
+          echo "No bug report generated. Skipping PR comment."
+          exit 0
+        fi
+
         BUG_REPORT=$(cat bug-report.md)
 
         gh pr comment ${{ inputs.pr-number }} --body "## 🤖 Automated Bug Scan (Grok Code Fast 1)
