@@ -132,7 +132,7 @@ runs:
 
 $BUG_REPORT
 
----
+___
 *Scanned ${{ steps.files.outputs.file-count }} files in this PR.*
 *This is an automated scan. Please review findings carefully.*"
       env:

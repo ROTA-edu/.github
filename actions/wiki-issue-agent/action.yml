@@ -119,7 +119,7 @@ runs:
 
 $ANALYSIS
 
----
+___
 *This analysis was generated automatically. Please validate before acting on it.*"
       env:
         GH_TOKEN: ${{ inputs.github-token }}

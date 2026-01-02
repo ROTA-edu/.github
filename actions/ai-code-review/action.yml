@@ -86,7 +86,7 @@ runs:
 
 $REVIEW
 
----
+___
 *This review was generated automatically. Please use your judgment and don't blindly follow all suggestions.*"
       env:
         GH_TOKEN: ${{ inputs.github-token }}
