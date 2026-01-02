@@ -1,0 +1,133 @@
+name: 'Wiki & Issue Agent'
+description: 'Maintains wiki and analyzes issues using DeepSeek V3.2'
+author: 'ROTA Team'
+
+inputs:
+  openrouter-api-key:
+    description: 'OpenRouter API key'
+    required: true
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+  mode:
+    description: 'Mode: wiki or issue'
+    required: true
+  issue-number:
+    description: 'Issue number (for issue mode)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Wiki Update Mode
+      if: inputs.mode == 'wiki'
+      shell: bash
+      run: |
+        echo "🤖 Wiki Agent: Analyzing codebase changes..."
+
+        # Get recent commits (last week)
+        COMMITS=$(git log --since="1 week ago" --pretty=format:"- %s (%h)" --no-merges)
+
+        # Get changed files
+        CHANGED_FILES=$(git diff --name-only HEAD~7..HEAD | grep -E '\.(ts|js|md)$' || echo "No significant changes")
+
+        # Read current README for context
+        README_CONTENT=$(head -100 README.md 2>/dev/null || echo "No README found")
+
+        # Call DeepSeek V3.2 via OpenRouter
+        WIKI_UPDATE=$(cat <<EOF | curl -s https://openrouter.ai/api/v1/chat/completions \
+          -H "Authorization: Bearer ${{ inputs.openrouter-api-key }}" \
+          -H "Content-Type: application/json" \
+          -d @- | jq -r '.choices[0].message.content'
+        {
+          "model": "deepseek/deepseek-v3.2",
+          "messages": [{
+            "role": "system",
+            "content": "You are a technical documentation expert. Analyze code changes and update wiki/documentation accordingly. Be concise and technical."
+          }, {
+            "role": "user",
+            "content": "# Task\nAnalyze these recent changes and suggest wiki updates.\n\n## Recent Commits (Last 7 Days)\n$COMMITS\n\n## Changed Files\n$CHANGED_FILES\n\n## Current README (first 100 lines)\n\`\`\`markdown\n$README_CONTENT\n\`\`\`\n\n## Instructions\n1. Identify if documentation needs updating\n2. Suggest specific wiki page updates\n3. Generate new documentation sections if needed\n4. Keep it concise and actionable\n\n## Output Format\n### Changes Detected\n- ...\n\n### Recommended Wiki Updates\n#### Page: [page-name]\n- Update: ...\n- New section: ...\n\n### New Documentation Needed\n- ..."
+          }]
+        }
+        EOF
+        )
+
+        echo "$WIKI_UPDATE" > wiki-suggestions.md
+
+        # Post as issue if significant changes detected
+        if echo "$WIKI_UPDATE" | grep -q "Recommended Wiki Updates"; then
+          gh issue create \
+            --title "📚 Wiki Update Needed (Auto-generated)" \
+            --body "$(cat wiki-suggestions.md)" \
+            --label "documentation,auto-generated" || true
+        else
+          echo "✅ No wiki updates needed this week"
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: Issue Analysis Mode
+      if: inputs.mode == 'issue'
+      shell: bash
+      run: |
+        echo "🤖 Issue Agent: Analyzing issue #${{ inputs.issue-number }}..."
+
+        # Get issue details
+        ISSUE_DATA=$(gh issue view ${{ inputs.issue-number }} --json title,body,labels)
+        ISSUE_TITLE=$(echo "$ISSUE_DATA" | jq -r '.title')
+        ISSUE_BODY=$(echo "$ISSUE_DATA" | jq -r '.body')
+
+        # Search codebase for related files
+        KEYWORDS=$(echo "$ISSUE_TITLE $ISSUE_BODY" | tr '[:upper:]' '[:lower:]' | grep -oE '\b[a-z]{4,}\b' | head -5 | tr '\n' ' ')
+
+        RELATED_FILES=""
+        for keyword in $KEYWORDS; do
+          FILES=$(grep -rl "$keyword" src/ 2>/dev/null | head -3 || echo "")
+          RELATED_FILES="$RELATED_FILES\n$FILES"
+        done
+
+        # Analyze with DeepSeek
+        ANALYSIS=$(cat <<EOF | curl -s https://openrouter.ai/api/v1/chat/completions \
+          -H "Authorization: Bearer ${{ inputs.openrouter-api-key }}" \
+          -H "Content-Type: application/json" \
+          -d @- | jq -r '.choices[0].message.content'
+        {
+          "model": "deepseek/deepseek-v3.2",
+          "messages": [{
+            "role": "system",
+            "content": "You are a senior software engineer triaging issues. Analyze the issue, suggest labels, estimate complexity, and identify potential root cause."
+          }, {
+            "role": "user",
+            "content": "# Issue Analysis Request\n\n## Issue #${{ inputs.issue-number }}\n**Title:** $ISSUE_TITLE\n\n**Description:**\n$ISSUE_BODY\n\n## Related Files Found\n$RELATED_FILES\n\n## Your Task\n1. Categorize: bug | feature | enhancement | question\n2. Estimate complexity: low | medium | high\n3. Suggest priority: p0-critical | p1-high | p2-medium | p3-low\n4. Identify potential root cause location\n5. Suggest next steps for assignee\n\n## Output Format\n**Category:** [category]\n**Complexity:** [complexity]\n**Priority:** [priority]\n\n**Root Cause Analysis:**\n- Likely location: [file:line]\n- Hypothesis: ...\n\n**Recommended Labels:**\n- label1\n- label2\n\n**Next Steps:**\n1. ...\n2. ..."
+          }]
+        }
+        EOF
+        )
+
+        echo "$ANALYSIS" > issue-analysis.md
+
+        # Extract labels and add them
+        LABELS=$(echo "$ANALYSIS" | grep -A 10 "Recommended Labels" | grep "^-" | sed 's/^- //' | tr '\n' ',' | sed 's/,$//')
+
+        if [ -n "$LABELS" ]; then
+          gh issue edit ${{ inputs.issue-number }} --add-label "$LABELS" || true
+        fi
+
+        # Post analysis as comment
+        gh issue comment ${{ inputs.issue-number }} --body "## 🤖 AI Issue Analysis (DeepSeek V3.2)
+
+$ANALYSIS
+
+---
+*This analysis was generated automatically. Please validate before acting on it.*"
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+outputs:
+  wiki-suggestions:
+    description: 'Path to wiki suggestions file'
+    value: 'wiki-suggestions.md'
+  issue-analysis:
+    description: 'Path to issue analysis file'
+    value: 'issue-analysis.md'

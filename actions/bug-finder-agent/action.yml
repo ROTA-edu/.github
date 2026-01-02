@@ -1,0 +1,158 @@
+name: 'Bug Finder Agent'
+description: 'Daily code scan for bugs and security issues using Grok Code Fast 1'
+author: 'ROTA Team'
+
+inputs:
+  openrouter-api-key:
+    description: 'OpenRouter API key'
+    required: true
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+  scan-mode:
+    description: 'Scan mode: full | pr | daily'
+    required: false
+    default: 'daily'
+  pr-number:
+    description: 'PR number (for pr mode)'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get Files to Scan
+      id: files
+      shell: bash
+      run: |
+        if [ "${{ inputs.scan-mode }}" == "pr" ]; then
+          # PR mode: scan only changed files
+          FILES=$(gh pr diff ${{ inputs.pr-number }} --name-only | grep -E '\.(ts|js)$' || echo "")
+        elif [ "${{ inputs.scan-mode }}" == "daily" ]; then
+          # Daily mode: scan files changed in last 24 hours
+          FILES=$(git diff --name-only HEAD@{1.day.ago}..HEAD | grep -E '\.(ts|js)$' || echo "")
+
+          # If no changes, scan random sample of src/
+          if [ -z "$FILES" ]; then
+            FILES=$(find src/ -name "*.ts" | shuf | head -10)
+          fi
+        else
+          # Full mode: scan all TypeScript files (expensive!)
+          FILES=$(find src/ -name "*.ts" | head -20)
+        fi
+
+        echo "files-to-scan<<EOF" >> $GITHUB_OUTPUT
+        echo "$FILES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        FILE_COUNT=$(echo "$FILES" | wc -l)
+        echo "file-count=$FILE_COUNT" >> $GITHUB_OUTPUT
+
+    - name: Scan Files for Bugs
+      shell: bash
+      run: |
+        FILES="${{ steps.files.outputs.files-to-scan }}"
+
+        if [ -z "$FILES" ]; then
+          echo "✅ No files to scan"
+          exit 0
+        fi
+
+        echo "🔍 Scanning ${{ steps.files.outputs.file-count }} files..."
+
+        # Read file contents (max 10 files to avoid token limits)
+        CODE_SAMPLES=""
+        COUNT=0
+        for file in $FILES; do
+          if [ $COUNT -ge 10 ]; then break; fi
+          if [ -f "$file" ]; then
+            echo "Reading: $file"
+            CONTENT=$(cat "$file")
+            CODE_SAMPLES="$CODE_SAMPLES\n\n## File: $file\n\`\`\`typescript\n$CONTENT\n\`\`\`"
+            COUNT=$((COUNT + 1))
+          fi
+        done
+
+        # Call Grok Code Fast 1 for bug analysis
+        BUG_REPORT=$(cat <<EOF | curl -s https://openrouter.ai/api/v1/chat/completions \
+          -H "Authorization: Bearer ${{ inputs.openrouter-api-key }}" \
+          -H "Content-Type: application/json" \
+          -d @- | jq -r '.choices[0].message.content'
+        {
+          "model": "x-ai/grok-code-fast-1",
+          "messages": [{
+            "role": "system",
+            "content": "You are an expert code auditor specializing in TypeScript/JavaScript. Your job is to find bugs, security vulnerabilities, and code quality issues. Focus on:\n1. Security: XSS, SQL injection, prompt injection, exposed secrets\n2. Logic errors: null pointers, type mismatches, async/await issues\n3. Performance: N+1 queries, memory leaks, inefficient algorithms\n4. Best practices: error handling, input validation, type safety\n\nBe specific: provide file names, line numbers (estimate), and severity."
+          }, {
+            "role": "user",
+            "content": "# Bug Scan Request\n\nScan these TypeScript files for potential issues:\n\n$CODE_SAMPLES\n\n## Output Format\n\n### 🔴 Critical Issues (Security, Data Loss)\n- **[File:Line]** Issue description\n  - Severity: Critical\n  - Impact: ...\n  - Fix: ...\n\n### 🟠 High Priority (Logic Errors, Performance)\n- **[File:Line]** Issue description\n  - Severity: High\n  - Impact: ...\n  - Fix: ...\n\n### 🟡 Medium Priority (Code Quality, Best Practices)\n- **[File:Line]** Issue description\n  - Severity: Medium\n  - Suggestion: ...\n\n### ✅ Looks Good\n- List files that passed all checks\n\nIf no issues found, just say \"No issues detected\"."
+          }]
+        }
+        EOF
+        )
+
+        echo "$BUG_REPORT" > bug-report.md
+
+        # Check if critical issues found
+        if echo "$BUG_REPORT" | grep -q "🔴 Critical Issues"; then
+          echo "has-critical=true" >> $GITHUB_ENV
+
+          # Create high-priority issue
+          gh issue create \
+            --title "🔴 CRITICAL: Security/Bug Issues Detected (Auto-scan)" \
+            --body "$(cat bug-report.md)" \
+            --label "bug,security,priority:high,auto-generated" || true
+        elif echo "$BUG_REPORT" | grep -q "🟠 High Priority"; then
+          echo "has-high=true" >> $GITHUB_ENV
+
+          # Create medium-priority issue
+          gh issue create \
+            --title "🟠 High Priority Issues Detected (Auto-scan)" \
+            --body "$(cat bug-report.md)" \
+            --label "bug,priority:medium,auto-generated" || true
+        else
+          echo "✅ No critical or high-priority issues found"
+
+          # Save report as artifact for review
+          if echo "$BUG_REPORT" | grep -q "🟡 Medium Priority"; then
+            echo "Found medium-priority suggestions"
+            # Could post as comment on a tracking issue instead of creating new one
+          fi
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: PR Mode - Post Review
+      if: inputs.scan-mode == 'pr'
+      shell: bash
+      run: |
+        BUG_REPORT=$(cat bug-report.md)
+
+        gh pr comment ${{ inputs.pr-number }} --body "## 🤖 Automated Bug Scan (Grok Code Fast 1)
+
+$BUG_REPORT
+
+---
+*Scanned ${{ steps.files.outputs.file-count }} files in this PR.*
+*This is an automated scan. Please review findings carefully.*"
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+
+    - name: Fail if Critical Issues
+      if: env.has-critical == 'true'
+      shell: bash
+      run: |
+        echo "❌ Critical security/bug issues detected!"
+        echo "Please review the auto-generated issue before merging."
+        exit 1
+
+outputs:
+  bug-report:
+    description: 'Path to bug report file'
+    value: 'bug-report.md'
+  has-critical:
+    description: 'Whether critical issues were found'
+    value: ${{ env.has-critical }}
+  has-high:
+    description: 'Whether high-priority issues were found'
+    value: ${{ env.has-high }}
