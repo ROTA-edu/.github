@@ -1,0 +1,43 @@
+name: Daily Bug Scan
+
+on:
+  schedule:
+    # Every day at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Manual trigger
+  pull_request:  # Also scan on PR
+    types: [opened, synchronize]
+
+jobs:
+  scan-bugs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history
+
+      - name: Determine scan mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "scan-mode=pr" >> $GITHUB_OUTPUT
+            echo "pr-number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "scan-mode=daily" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Bug Finder
+        uses: ./.github/actions/bug-finder-agent
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          scan-mode: ${{ steps.mode.outputs.scan-mode }}
+          pr-number: ${{ steps.mode.outputs.pr-number }}
+
+      - name: Upload bug report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bug-report-${{ github.run_number }}
+          path: bug-report.md
+          retention-days: 30

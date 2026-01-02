@@ -1,0 +1,27 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  analyze-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Issue Analysis
+        uses: ./.github/actions/wiki-issue-agent
+        with:
+          openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: 'issue'
+          issue-number: ${{ github.event.issue.number }}
+
+      - name: Upload analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-${{ github.event.issue.number }}-analysis
+          path: issue-analysis.md
+          retention-days: 90
