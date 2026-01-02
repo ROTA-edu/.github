@@ -39,12 +39,52 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-## 🤖 Custom Actions
+## 🤖 Custom AI Agents
 
 Located in [`actions/`](./actions/):
 
-### [`ai-code-review`](./actions/ai-code-review/)
-Automated PR review using Claude AI.
+### [`wiki-issue-agent`](./actions/wiki-issue-agent/) - DeepSeek V3.2
+Dual-purpose agent for wiki maintenance and issue triage.
+
+**Wiki Mode (Weekly):**
+```yaml
+- uses: ROTA-edu/.github/actions/wiki-issue-agent@v1
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    mode: 'wiki'
+```
+
+**Issue Mode (Auto on issue open):**
+```yaml
+- uses: ROTA-edu/.github/actions/wiki-issue-agent@v1
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    mode: 'issue'
+    issue-number: ${{ github.event.issue.number }}
+```
+
+### [`bug-finder-agent`](./actions/bug-finder-agent/) - Grok Code Fast 1
+Daily security and bug scanning.
+
+**Daily Scan:**
+```yaml
+- uses: ROTA-edu/.github/actions/bug-finder-agent@v1
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    scan-mode: 'daily'
+```
+
+**PR Scan:**
+```yaml
+- uses: ROTA-edu/.github/actions/bug-finder-agent@v1
+  with:
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
+    scan-mode: 'pr'
+    pr-number: ${{ github.event.pull_request.number }}
+```
+
+### [`ai-code-review`](./actions/ai-code-review/) - Claude 3.5 Sonnet
+Comprehensive PR code review.
 
 **Usage:**
 ```yaml
@@ -53,6 +93,8 @@ Automated PR review using Claude AI.
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
     focus-areas: security,performance,testing
 ```
+
+**Cost:** ~$2-7/month per repo (using cheap models)
 
 ## 🏗️ Repository Structure
 
