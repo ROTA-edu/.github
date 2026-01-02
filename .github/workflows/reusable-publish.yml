@@ -78,9 +78,15 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Changelog (AI)
-        if: ${{ inputs.generate-changelog && secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ inputs.generate-changelog }}
         id: changelog
+        continue-on-error: true
         run: |
+          # Check if API key is available
+          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "ANTHROPIC_API_KEY not set, skipping AI changelog"
+            exit 1
+          fi
           # Get previous tag
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
@@ -117,7 +123,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Generate Simple Changelog (fallback)
-        if: ${{ inputs.generate-changelog && secrets.ANTHROPIC_API_KEY == '' }}
+        if: ${{ inputs.generate-changelog && steps.changelog.outcome != 'success' }}
         id: changelog-simple
         run: |
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
