@@ -1,69 +1,72 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/ROTA-edu/.github/main/profile/banner.png" width="100%" alt="ROTA Education Banner">
 
-  # ROTA Education
-  ### Synthesizing AI, MetaHuman Avatars, and Pedagogical Intelligence.
+  ```text
+  ██████╗  ██████╗ ████████╗ █████╗ 
+  ██╔══██╗██╔═══██╗╚══██╔══╝██╔══██╗
+  ██████╔╝██║   ██║   ██║   ███████║
+  ██╔══██╗██║   ██║   ██║   ██╔══██║
+  ██║  ██║╚██████╔╝   ██║   ██║  ██║
+  ╚═╝  ╚═╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝
+  ```
   
-  [![License: UNLICENSED](https://img.shields.io/badge/license-UNLICENSED-red.svg)](LICENSE)
-  [![Stack: TypeScript](https://img.shields.io/badge/stack-TypeScript-blue.svg)](https://www.typescriptlang.org/)
-  [![AI: Gemini](https://img.shields.io/badge/AI-Gemini_2.5_Flash-orange.svg)](https://deepmind.google/technologies/gemini/)
-  [![Engine: SvelteKit](https://img.shields.io/badge/engine-SvelteKit-ff3e00.svg)](https://kit.svelte.dev/)
+  ### Next-Generation Pedagogical Intelligence
+  #### Fusing Artificial Intelligence, MetaHuman Avatars, and Cognitive Science.
 
-  [Mission](#-the-mission) • [Ecosystem](#-the-ecosystem) • [Architecture](#-architecture) • [Join Us](#-joining-the-future)
+  [Core Mission](#core-mission) • [System Ecosystem](#system-ecosystem) • [Technical Architecture](#technical-architecture) • [Engineering Principles](#engineering-principles)
 </div>
 
 ---
 
-## 🎯 The Mission | Vizyonumuz
+### Core Mission
 
-ROTA, eğitimin geleceğini kişiselleştirilmiş yapay zeka ve fotogerçekçi MetaHuman avatarlar ile yeniden tanımlıyor. Sadece bilgi aktaran değil, öğrencinin hızına, ilgi alanına ve öğrenme biçimine uyum sağlayan bir **Pedagojik Zeka** inşa ediyoruz.
+ROTA is dedicated to revolutionizing the educational landscape by integrating advanced large language models with high-fidelity MetaHuman avatars. Our objective is to build a stateless, high-performance orchestration layer that adapts dynamically to individual cognitive profiles, linguistic patterns, and learning velocities.
 
-> **English:** ROTA is redefining the future of education through personalized AI and photorealistic MetaHuman avatars. We are building a **Pedagogical Intelligence** that doesn't just transfer knowledge but adapts to the student's pace, interests, and learning style.
-
----
-
-## 🏗 The Ecosystem | Ekosistem
-
-ROTA, birbirine sıkı sıkıya bağlı ancak bağımsız ölçeklenebilen bir **Polyrepo** mimarisi üzerine kuruludur:
-
-| Repository | Description | Status |
-|------------|-------------|--------|
-| [**rota-platform**](https://github.com/ROTA-edu/rota-platform) | The Core orchestrator and user interface hub. | 🔄 Active |
-| [**rota-ai-engine**](https://github.com/ROTA-edu/rota-ai-engine) | Single Source of Truth for all AI models, prompts, and tools. | ✅ Phase 3 Complete |
-| [**rota-course-engine**](https://github.com/ROTA-edu/rota-course-engine) | Specialized pipeline for syllabus and content generation. | 🔄 Evolving |
-| [**rota-atlas**](https://github.com/ROTA-edu/rota-atlas) | Personalized learning path and knowledge graph visualizer. | 🧪 Experimental |
-| [**rota-canvas-engine**](https://github.com/ROTA-edu/rota-canvas-engine) | High-performance visual rendering for diagrams and graphs. | 🛠️ In Dev |
+We believe that true education is not the delivery of content, but the orchestration of an intellectual spark.
 
 ---
 
-## ⚡ Tech Stack | Teknoloji
+### System Ecosystem
 
-- **AI Orchestration**: Gemini 2.5 Flash & Pro (Realtime WebSocket API)
-- **Frontend**: SvelteKit for high-performance, low-latency interfaces
-- **Graphics**: HTML5 Canvas & WebGL with specialized rendering engines
-- **Avatar Integration**: UE5 MetaHuman & Pixel Streaming (Phase 6+)
-- **System**: Event-driven decoupled architecture
+The ROTA architecture is implemented as a decoupled polyrepo system, ensuring independent scalability and specialized domain focus across the stack.
 
----
-
-## 📐 Architecture Principles | Mimari Prensipler
-
-1. **Single Source of Truth (SSOT)**: Kritik veriler ve modeller tek bir merkezden yönetilir.
-2. **Event-Driven Decoupling**: Sistemlerin birbirine bağımlılığı olay tabanlı iletişimle minimize edilir.
-3. **Fail Fast, Fail Loud**: Hatalar erkenden yakalanır ve şeffaf bir şekilde raporlanır.
-4. **Domain-Driven Design (DDD)**: Her repository kendi domain sınırları içinde bağımsızdır.
+| Repository | Focus Area | Status |
+|------------|------------|--------|
+| **rota-platform** | Centralized application orchestrator and user lifecycle management. | Active |
+| **rota-ai-engine** | Single Source of Truth for Gemini Live API integration and tool schemas. | Stable |
+| **rota-course-engine** | Worker-based pipeline for automated syllabus and content generation. | Scaling |
+| **rota-atlas** | Real-time knowledge graph visualization and navigation system. | Alpha |
+| **rota-canvas-engine** | Low-latency rendering engine for interactive educational diagrams. | Development |
 
 ---
 
-## 🚀 Joining the Future | Geleceğe Katılın
+<div align="center">
+  <img src="https://raw.githubusercontent.com/ROTA-edu/.github/main/profile/architecture.png" width="80%" alt="ROTA Architecture Schematic">
+  <p><i>Fig 1. Logical Architecture Schematic</i></p>
+</div>
 
-Geleceğin eğitimini inşa etmek bir maraton değil, bir devrimdir. Eğer sen de bu devrimin bir parçası olmak istiyorsan, kodlarımızı incele ve repo'larımıza yıldız bırakmayı unutma!
+---
 
-> **"Eğitim, bir kovayı doldurmak değil, bir ateşi yakmaktır."** – W.B. Yeats
+### Technical Architecture
+
+The platform leverages a hybrid cloud-client execution model:
+
+1.  **Orchestration**: Direct integration with Gemini 2.5 Flash and Pro via standard REST and Realtime WebSocket protocols.
+2.  **Rendering**: SvelteKit-powered frontend utilizing hardware-accelerated HTML5 Canvas and WebGL.
+3.  **Synchronization**: Event-driven architecture ensuring eventual consistency across distributed engines.
+4.  **Avatars**: Future integration with Unreal Engine 5 Pixel Streaming for photorealistic pedagogical interaction (Phase 6).
+
+---
+
+### Engineering Principles
+
+- **Single Source of Truth (SSOT)**: Critical model identifiers and prompts are managed centrally to prevent logic drift.
+- **Dependency Injection**: Systems are designed to accept dependencies at runtime, facilitating robust unit testing and mocking.
+- **Fail Fast Execution**: Strict input validation and early exit patterns are enforced across all services.
+- **Domain Decoupling**: Business logic is isolated from infrastructure, ensuring that engines remain framework-agnostic.
 
 ---
 
 <p align="center">
-  Built with ❤️ by the <b>ROTA Team</b><br>
-  Istanbul & Remote
+  ROTA Education | Istanbul & Remote Engineering
 </p>
