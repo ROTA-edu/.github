@@ -41,7 +41,7 @@ The ROTA architecture is implemented as a decoupled polyrepo system, ensuring in
 ---
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ROTA-edu/.github/main/profile/architecture.png" width="80%" alt="ROTA Architecture Schematic">
+  <img src="https://raw.githubusercontent.com/ROTA-edu/.github/main/profile/core.jpeg" width="80%" alt="ROTA Architecture Schematic">
   <p><i>Fig 1. Logical Architecture Schematic</i></p>
 </div>
 
