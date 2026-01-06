@@ -1,0 +1,726 @@
+name: Automated Code Review
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+      - staging
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+      - develop
+
+# Prevent multiple runs for the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+  PNPM_VERSION: '9'
+  COVERAGE_THRESHOLD: 80
+
+jobs:
+  # ============================================
+  # STATIC ANALYSIS
+  # ============================================
+
+  lint:
+    name: Lint Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile
+          echo "::endgroup::"
+
+      - name: 🔍 Run ESLint
+        run: |
+          echo "::group::Running ESLint"
+          pnpm lint 2>&1 | tee eslint-report.txt || EXIT_CODE=$?
+          echo "::endgroup::"
+
+          if [ ${EXIT_CODE:-0} -ne 0 ]; then
+            echo "::error::ESLint found errors"
+            cat eslint-report.txt
+            exit 1
+          fi
+
+      - name: 📊 ESLint report summary
+        if: always()
+        run: |
+          if [ -f eslint-report.txt ]; then
+            echo "### 🔍 ESLint Results" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat eslint-report.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  type-check:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile
+          echo "::endgroup::"
+
+      - name: 🔍 Run TypeScript type check
+        run: |
+          echo "::group::Running TypeScript type check"
+          START_TIME=$(date +%s)
+          pnpm check 2>&1 | tee typecheck-report.txt || EXIT_CODE=$?
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Type check completed in ${DURATION}s"
+          echo "::endgroup::"
+
+          if [ ${EXIT_CODE:-0} -ne 0 ]; then
+            echo "::error::TypeScript type check failed"
+            cat typecheck-report.txt
+            exit 1
+          fi
+
+      - name: 📊 Type check report summary
+        if: always()
+        run: |
+          if [ -f typecheck-report.txt ]; then
+            echo "### 🔍 TypeScript Type Check Results" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat typecheck-report.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  complexity-analysis:
+    name: Code Complexity Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Install analysis tools
+        run: |
+          npm install -g complexity-report jscpd
+
+      - name: 📊 Analyze cyclomatic complexity
+        run: |
+          echo "::group::Analyzing cyclomatic complexity"
+
+          # Find all TypeScript files
+          find . -type f \( -name "*.ts" -o -name "*.tsx" \) \
+            -not -path "*/node_modules/*" \
+            -not -path "*/dist/*" \
+            -not -path "*/.next/*" \
+            -not -path "*/coverage/*" > ts-files.txt
+
+          # Analyze complexity
+          echo "# Code Complexity Report" > complexity-report.md
+          echo "" >> complexity-report.md
+          echo "## High Complexity Functions (>10)" >> complexity-report.md
+          echo "" >> complexity-report.md
+
+          HIGH_COMPLEXITY=0
+
+          while IFS= read -r file; do
+            # Simple complexity check using grep (approximation)
+            COMPLEXITY=$(grep -o -E "(if|for|while|case|catch|\?\?|\|\||&&)" "$file" 2>/dev/null | wc -l || echo 0)
+
+            if [ "$COMPLEXITY" -gt 10 ]; then
+              echo "- \`$file\`: ~$COMPLEXITY complexity points" >> complexity-report.md
+              HIGH_COMPLEXITY=$((HIGH_COMPLEXITY + 1))
+            fi
+          done < ts-files.txt
+
+          if [ $HIGH_COMPLEXITY -eq 0 ]; then
+            echo "✅ No high-complexity functions found" >> complexity-report.md
+          else
+            echo "" >> complexity-report.md
+            echo "⚠️ Found $HIGH_COMPLEXITY files with high complexity" >> complexity-report.md
+          fi
+
+          cat complexity-report.md
+          echo "::endgroup::"
+
+      - name: 🔍 Detect code duplication
+        run: |
+          echo "::group::Detecting code duplication"
+
+          jscpd . --pattern "**/*.{ts,tsx,js,jsx}" \
+            --ignore "node_modules/**,dist/**,.next/**,coverage/**" \
+            --min-lines 5 \
+            --min-tokens 50 \
+            --format markdown \
+            --output ./duplication-report.md || true
+
+          if [ -f duplication-report.md ]; then
+            echo "### 📋 Code Duplication Report" >> $GITHUB_STEP_SUMMARY
+            cat duplication-report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ No significant code duplication detected"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📊 Upload complexity reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: complexity-reports
+          path: |
+            complexity-report.md
+            duplication-report.md
+          retention-days: 30
+
+  # ============================================
+  # TESTING
+  # ============================================
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile
+          echo "::endgroup::"
+
+      - name: 🧪 Run tests with coverage
+        run: |
+          echo "::group::Running tests with coverage"
+          START_TIME=$(date +%s)
+          pnpm test:coverage --if-present 2>&1 | tee test-output.txt || EXIT_CODE=$?
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo "Tests completed in ${DURATION}s"
+          echo "TEST_DURATION=$DURATION" >> $GITHUB_ENV
+          echo "::endgroup::"
+
+          if [ ${EXIT_CODE:-0} -ne 0 ]; then
+            echo "::error::Tests failed"
+            exit 1
+          fi
+
+      - name: 📊 Test execution summary
+        if: always()
+        run: |
+          echo "### 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Execution Time:** ${TEST_DURATION}s" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f test-output.txt ]; then
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat test-output.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 📊 Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/coverage/**
+            test-output.txt
+          retention-days: 30
+
+  coverage-check:
+    name: Coverage Analysis
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download coverage reports
+        uses: actions/download-artifact@v4
+        with:
+          name: test-results
+
+      - name: 📊 Check coverage threshold
+        run: |
+          echo "::group::Checking coverage threshold"
+
+          THRESHOLD=${{ env.COVERAGE_THRESHOLD }}
+          FAILED_PACKAGES=""
+
+          # Find all coverage-summary.json files
+          find . -name "coverage-summary.json" -type f > coverage-files.txt
+
+          if [ ! -s coverage-files.txt ]; then
+            echo "⚠️ No coverage reports found"
+            exit 0
+          fi
+
+          echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Lines | Statements | Functions | Branches |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|------------|-----------|----------|" >> $GITHUB_STEP_SUMMARY
+
+          while IFS= read -r coverage_file; do
+            PACKAGE_DIR=$(dirname "$coverage_file" | sed 's|/coverage||')
+            PACKAGE_NAME=$(basename "$PACKAGE_DIR")
+
+            # Extract coverage percentages
+            LINE_COV=$(grep -o '"lines":{"total":[0-9]*,"covered":[0-9]*,"skipped":[0-9]*,"pct":[0-9.]*' "$coverage_file" | grep -o 'pct":[0-9.]*' | cut -d':' -f2 || echo "0")
+            STMT_COV=$(grep -o '"statements":{"total":[0-9]*,"covered":[0-9]*,"skipped":[0-9]*,"pct":[0-9.]*' "$coverage_file" | grep -o 'pct":[0-9.]*' | cut -d':' -f2 || echo "0")
+            FUNC_COV=$(grep -o '"functions":{"total":[0-9]*,"covered":[0-9]*,"skipped":[0-9]*,"pct":[0-9.]*' "$coverage_file" | grep -o 'pct":[0-9.]*' | cut -d':' -f2 || echo "0")
+            BRANCH_COV=$(grep -o '"branches":{"total":[0-9]*,"covered":[0-9]*,"skipped":[0-9]*,"pct":[0-9.]*' "$coverage_file" | grep -o 'pct":[0-9.]*' | cut -d':' -f2 || echo "0")
+
+            # Check if below threshold
+            STATUS="✅"
+            for COV in $LINE_COV $STMT_COV $FUNC_COV $BRANCH_COV; do
+              COV_INT=$(echo "$COV" | cut -d'.' -f1)
+              if [ "$COV_INT" -lt "$THRESHOLD" ]; then
+                STATUS="❌"
+                FAILED_PACKAGES="$FAILED_PACKAGES $PACKAGE_NAME"
+                break
+              fi
+            done
+
+            echo "| $STATUS $PACKAGE_NAME | ${LINE_COV}% | ${STMT_COV}% | ${FUNC_COV}% | ${BRANCH_COV}% |" >> $GITHUB_STEP_SUMMARY
+          done < coverage-files.txt
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Threshold:** ${THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+
+          if [ -n "$FAILED_PACKAGES" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Failed packages:**" >> $GITHUB_STEP_SUMMARY
+            echo "$FAILED_PACKAGES" | tr ' ' '\n' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+            echo "::error::Coverage below threshold for: $FAILED_PACKAGES"
+            exit 1
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ All packages meet coverage threshold" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📊 Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/coverage-final.json
+          fail_ci_if_error: false
+          verbose: true
+
+  # ============================================
+  # BUILD VERIFICATION
+  # ============================================
+
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          START_TIME=$(date +%s)
+          pnpm install --frozen-lockfile
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Dependencies installed in ${DURATION}s"
+          echo "::endgroup::"
+
+      - name: 🏗️ Build all packages
+        run: |
+          echo "::group::Building all packages"
+          START_TIME=$(date +%s)
+          pnpm build 2>&1 | tee build-output.txt || EXIT_CODE=$?
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+
+          echo "Build completed in ${DURATION}s"
+          echo "BUILD_DURATION=$DURATION" >> $GITHUB_ENV
+          echo "::endgroup::"
+
+          if [ ${EXIT_CODE:-0} -ne 0 ]; then
+            echo "::error::Build failed"
+            cat build-output.txt
+            exit 1
+          fi
+
+      - name: 📊 Verify build outputs
+        run: |
+          echo "::group::Verifying build outputs"
+
+          echo "### 🏗️ Build Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Time:** ${BUILD_DURATION}s" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Status | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|------|" >> $GITHUB_STEP_SUMMARY
+
+          BUILD_FAILED=0
+
+          for package in rota-*/; do
+            if [ -f "${package}package.json" ]; then
+              PACKAGE_NAME=$(basename "$package")
+
+              # Check if package has build script
+              if grep -q '"build"' "${package}package.json" 2>/dev/null; then
+                if [ -d "${package}dist" ]; then
+                  BUILD_SIZE=$(du -sh "${package}dist" 2>/dev/null | cut -f1)
+                  echo "| ✅ $PACKAGE_NAME | Success | $BUILD_SIZE |" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "| ❌ $PACKAGE_NAME | Missing dist/ | - |" >> $GITHUB_STEP_SUMMARY
+                  BUILD_FAILED=1
+                fi
+              else
+                echo "| ⏭️ $PACKAGE_NAME | No build script | - |" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+
+          if [ $BUILD_FAILED -eq 1 ]; then
+            echo "::error::Some packages failed to build"
+            exit 1
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📊 Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            **/dist/**
+            build-output.txt
+          retention-days: 7
+
+  # ============================================
+  # SECURITY SCANNING
+  # ============================================
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📁 Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile
+          echo "::endgroup::"
+
+      - name: 🔒 Run dependency audit
+        run: |
+          echo "::group::Running dependency audit"
+
+          pnpm audit --prod --audit-level=moderate 2>&1 | tee audit-report.txt || AUDIT_EXIT=$?
+
+          echo "### 🔒 Security Audit" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat audit-report.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+          # Don't fail on moderate vulnerabilities, just warn
+          if [ ${AUDIT_EXIT:-0} -ne 0 ]; then
+            echo "::warning::Security vulnerabilities found. Please review audit-report.txt"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 🔍 Secret scanning
+        run: |
+          echo "::group::Scanning for secrets"
+
+          # Check for common secret patterns
+          echo "Scanning for potential secrets..."
+
+          SECRETS_FOUND=0
+
+          # Scan for common patterns
+          if grep -r -E "(API[_-]?KEY|SECRET[_-]?KEY|PASSWORD|PRIVATE[_-]?KEY|AWS[_-]?ACCESS|TOKEN|BEARER)" \
+            --exclude-dir=node_modules \
+            --exclude-dir=dist \
+            --exclude-dir=coverage \
+            --exclude-dir=.git \
+            --exclude="*.md" \
+            --exclude=".env.example" \
+            --exclude=".env.template" \
+            . > secret-scan.txt 2>/dev/null; then
+
+            echo "⚠️ Potential secrets found:"
+            cat secret-scan.txt
+            echo "::warning::Potential secrets detected. Please review."
+            SECRETS_FOUND=1
+          fi
+
+          if [ $SECRETS_FOUND -eq 0 ]; then
+            echo "✅ No secrets detected"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📊 Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            audit-report.txt
+            secret-scan.txt
+          retention-days: 30
+
+  # ============================================
+  # PERFORMANCE CHECKS
+  # ============================================
+
+  performance:
+    name: Performance Analysis
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 📥 Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+
+      - name: 📊 Analyze bundle sizes
+        run: |
+          echo "::group::Analyzing bundle sizes"
+
+          echo "### 📦 Bundle Size Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Total Size | Change |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for package in rota-*/; do
+            if [ -d "${package}dist" ]; then
+              PACKAGE_NAME=$(basename "$package")
+              CURRENT_SIZE=$(du -sb "${package}dist" 2>/dev/null | cut -f1)
+              CURRENT_SIZE_HUMAN=$(numfmt --to=iec-i --suffix=B $CURRENT_SIZE)
+
+              echo "| $PACKAGE_NAME | $CURRENT_SIZE_HUMAN | - |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "::endgroup::"
+
+      - name: 📊 Test execution time analysis
+        run: |
+          echo "::group::Analyzing test execution times"
+
+          # This would analyze test timing if available
+          echo "### ⏱️ Test Performance" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Test performance metrics will be available after test run." >> $GITHUB_STEP_SUMMARY
+
+          echo "::endgroup::"
+
+  # ============================================
+  # FINAL STATUS CHECK
+  # ============================================
+
+  code-quality:
+    name: Code Quality Gate
+    runs-on: ubuntu-latest
+    needs: [lint, type-check, test, build, security, complexity-analysis, coverage-check]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: 📊 Check all required jobs
+        run: |
+          echo "::group::Checking all quality gates"
+
+          LINT_STATUS="${{ needs.lint.result }}"
+          TYPE_CHECK_STATUS="${{ needs.type-check.result }}"
+          TEST_STATUS="${{ needs.test.result }}"
+          BUILD_STATUS="${{ needs.build.result }}"
+          SECURITY_STATUS="${{ needs.security.result }}"
+          COMPLEXITY_STATUS="${{ needs.complexity-analysis.result }}"
+          COVERAGE_STATUS="${{ needs.coverage-check.result }}"
+
+          echo "### 🎯 Quality Gates Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Lint | $LINT_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Type Check | $TYPE_CHECK_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | $TEST_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | $COVERAGE_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | $BUILD_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | $SECURITY_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Complexity | $COMPLEXITY_STATUS |" >> $GITHUB_STEP_SUMMARY
+
+          # Check if any required job failed
+          if [ "$LINT_STATUS" != "success" ] || \
+             [ "$TYPE_CHECK_STATUS" != "success" ] || \
+             [ "$TEST_STATUS" != "success" ] || \
+             [ "$BUILD_STATUS" != "success" ] || \
+             [ "$COVERAGE_STATUS" != "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Some quality gates failed**" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Quality gates failed. Please fix the issues above."
+            exit 1
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **All quality gates passed**" >> $GITHUB_STEP_SUMMARY
+
+          echo "::endgroup::"

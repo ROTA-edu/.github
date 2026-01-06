@@ -1,0 +1,289 @@
+name: Reusable Test
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      pnpm-version:
+        description: 'pnpm version to use'
+        required: false
+        type: string
+        default: '9'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      coverage-threshold:
+        description: 'Minimum coverage percentage required (0-100)'
+        required: false
+        type: number
+        default: 80
+      run-integration-tests:
+        description: 'Whether to run integration tests'
+        required: false
+        type: boolean
+        default: false
+      upload-coverage:
+        description: 'Upload coverage to Codecov'
+        required: false
+        type: boolean
+        default: true
+      fail-fast:
+        description: 'Stop execution on first error'
+        required: false
+        type: boolean
+        default: true
+      test-timeout:
+        description: 'Test timeout in milliseconds'
+        required: false
+        type: number
+        default: 30000
+    secrets:
+      CODECOV_TOKEN:
+        description: 'Codecov token for coverage upload'
+        required: false
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: 📦 Enable Corepack
+        run: |
+          echo "📦 Enabling Corepack for pnpm management..."
+          corepack enable
+
+      - name: 📦 Install pnpm ${{ inputs.pnpm-version }}
+        run: |
+          echo "📦 Installing pnpm version ${{ inputs.pnpm-version }}..."
+          corepack prepare pnpm@${{ inputs.pnpm-version }} --activate
+          echo "✅ pnpm version: $(pnpm --version)"
+
+      - name: 📂 Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "📂 Getting pnpm store directory..."
+          STORE_PATH=$(pnpm store path --silent)
+          echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
+          echo "✅ pnpm store path: $STORE_PATH"
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📥 Installing dependencies with frozen lockfile..."
+          pnpm install --frozen-lockfile
+          echo "✅ Dependencies installed successfully"
+
+      - name: 🧪 Run unit tests
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🧪 Running unit tests..."
+          echo "📁 Working directory: ${{ inputs.working-directory }}"
+          echo "⏱️ Test timeout: ${{ inputs.test-timeout }}ms"
+
+          if ! pnpm test; then
+            echo "❌ Unit tests failed"
+            exit 1
+          fi
+
+          echo "✅ Unit tests passed successfully"
+        continue-on-error: ${{ !inputs.fail-fast }}
+
+      - name: 📊 Run tests with coverage
+        id: coverage
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📊 Running tests with coverage..."
+
+          if ! pnpm test:coverage; then
+            echo "❌ Tests with coverage failed"
+            exit 1
+          fi
+
+          echo "✅ Tests with coverage completed successfully"
+
+          # Check if coverage files exist
+          if [ -f "coverage/coverage-summary.json" ]; then
+            echo "✅ Coverage summary found"
+            echo "has_coverage=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Coverage summary not found"
+            echo "has_coverage=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: ${{ !inputs.fail-fast }}
+
+      - name: 🔍 Check coverage threshold
+        if: steps.coverage.outputs.has_coverage == 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔍 Checking coverage threshold..."
+          echo "📊 Required threshold: ${{ inputs.coverage-threshold }}%"
+
+          # Extract coverage percentages
+          if [ -f "coverage/coverage-summary.json" ]; then
+            LINES_PCT=$(jq '.total.lines.pct' coverage/coverage-summary.json)
+            STATEMENTS_PCT=$(jq '.total.statements.pct' coverage/coverage-summary.json)
+            FUNCTIONS_PCT=$(jq '.total.functions.pct' coverage/coverage-summary.json)
+            BRANCHES_PCT=$(jq '.total.branches.pct' coverage/coverage-summary.json)
+
+            echo "📊 Coverage Results:"
+            echo "   Lines:      ${LINES_PCT}%"
+            echo "   Statements: ${STATEMENTS_PCT}%"
+            echo "   Functions:  ${FUNCTIONS_PCT}%"
+            echo "   Branches:   ${BRANCHES_PCT}%"
+
+            # Check if lines coverage meets threshold
+            if (( $(echo "$LINES_PCT < ${{ inputs.coverage-threshold }}" | bc -l) )); then
+              echo "❌ Coverage ${LINES_PCT}% is below threshold ${{ inputs.coverage-threshold }}%"
+              exit 1
+            fi
+
+            echo "✅ Coverage ${LINES_PCT}% meets threshold ${{ inputs.coverage-threshold }}%"
+          else
+            echo "⚠️ coverage-summary.json not found, skipping threshold check"
+          fi
+
+      - name: 🔧 Run integration tests
+        if: inputs.run-integration-tests
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔧 Running integration tests..."
+
+          if ! pnpm test:integration 2>/dev/null; then
+            echo "⚠️ Integration tests not available or failed"
+            echo "💡 Ensure 'test:integration' script exists"
+            exit 1
+          fi
+
+          echo "✅ Integration tests passed successfully"
+        continue-on-error: ${{ !inputs.fail-fast }}
+
+      - name: 📤 Upload coverage to Codecov
+        if: inputs.upload-coverage && steps.coverage.outputs.has_coverage == 'true'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ inputs.working-directory }}/coverage/coverage-final.json
+          flags: unittests
+          name: ${{ inputs.working-directory }}-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: 📊 Generate coverage badge
+        if: steps.coverage.outputs.has_coverage == 'true'
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📊 Generating coverage badge..."
+
+          if [ -f "coverage/coverage-summary.json" ]; then
+            COVERAGE=$(jq '.total.lines.pct' coverage/coverage-summary.json)
+            COLOR="red"
+
+            if (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+              COLOR="brightgreen"
+            elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then
+              COLOR="yellow"
+            elif (( $(echo "$COVERAGE >= 40" | bc -l) )); then
+              COLOR="orange"
+            fi
+
+            echo "✅ Coverage: ${COVERAGE}% (${COLOR})"
+            echo "coverage_pct=${COVERAGE}" >> $GITHUB_ENV
+            echo "coverage_color=${COLOR}" >> $GITHUB_ENV
+          fi
+
+      - name: 📤 Upload coverage reports as artifact
+        if: steps.coverage.outputs.has_coverage == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ github.run_id }}
+          path: |
+            ${{ inputs.working-directory }}/coverage/
+          retention-days: 7
+
+      - name: 💬 Comment coverage on PR
+        if: github.event_name == 'pull_request' && steps.coverage.outputs.has_coverage == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const coveragePath = '${{ inputs.working-directory }}/coverage/coverage-summary.json';
+
+            if (fs.existsSync(coveragePath)) {
+              const coverage = JSON.parse(fs.readFileSync(coveragePath, 'utf8'));
+              const lines = coverage.total.lines.pct;
+              const statements = coverage.total.statements.pct;
+              const functions = coverage.total.functions.pct;
+              const branches = coverage.total.branches.pct;
+
+              const threshold = ${{ inputs.coverage-threshold }};
+              const status = lines >= threshold ? '✅' : '❌';
+
+              const body = `## ${status} Test Coverage Report
+
+              **Working Directory:** \`${{ inputs.working-directory }}\`
+
+              | Metric | Coverage | Status |
+              |--------|----------|--------|
+              | Lines | ${lines}% | ${lines >= threshold ? '✅' : '❌'} |
+              | Statements | ${statements}% | ${statements >= threshold ? '✅' : '❌'} |
+              | Functions | ${functions}% | ${functions >= threshold ? '✅' : '❌'} |
+              | Branches | ${branches}% | ${branches >= threshold ? '✅' : '❌'} |
+
+              **Threshold:** ${threshold}%
+
+              ${lines >= threshold ? '✅ Coverage meets requirements!' : '❌ Coverage below threshold!'}
+              `;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      - name: 📊 Test Summary
+        if: always()
+        run: |
+          echo "📊 Test Job Summary"
+          echo "==================="
+          echo "Node.js version: ${{ inputs.node-version }}"
+          echo "pnpm version: ${{ inputs.pnpm-version }}"
+          echo "Working directory: ${{ inputs.working-directory }}"
+          echo "Coverage threshold: ${{ inputs.coverage-threshold }}%"
+          echo "Run integration tests: ${{ inputs.run-integration-tests }}"
+          echo "Upload coverage: ${{ inputs.upload-coverage }}"
+          echo "Fail fast: ${{ inputs.fail-fast }}"
+          echo "Test timeout: ${{ inputs.test-timeout }}ms"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ All tests passed!"
+          else
+            echo "❌ Some tests failed"
+            exit 1
+          fi

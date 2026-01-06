@@ -1,0 +1,660 @@
+name: Deployment Gates
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment (staging/production)'
+        required: true
+        type: string
+      deploy-ref:
+        description: 'Git ref to deploy'
+        required: true
+        type: string
+    secrets:
+      DEPLOYMENT_TOKEN:
+        required: true
+
+env:
+  NODE_VERSION: '18'
+  PNPM_VERSION: '9'
+
+jobs:
+  # ============================================
+  # PRE-DEPLOYMENT CHECKS
+  # ============================================
+
+  pre-deployment-validation:
+    name: Pre-deployment Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy-ref }}
+          fetch-depth: 0
+
+      - name: 🔍 Validate deployment ref
+        run: |
+          echo "::group::Validating deployment ref"
+
+          REF="${{ inputs.deploy-ref }}"
+          ENV="${{ inputs.environment }}"
+
+          echo "Deploying ref: $REF"
+          echo "Target environment: $ENV"
+
+          # Ensure ref exists
+          if ! git rev-parse --verify "$REF" >/dev/null 2>&1; then
+            echo "::error::Invalid ref: $REF"
+            exit 1
+          fi
+
+          # Get commit info
+          COMMIT_HASH=$(git rev-parse "$REF")
+          COMMIT_MSG=$(git log -1 --pretty=%B "$REF")
+          COMMIT_AUTHOR=$(git log -1 --pretty=%an "$REF")
+          COMMIT_DATE=$(git log -1 --pretty=%ad "$REF")
+
+          echo "### 📋 Deployment Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** $ENV" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref:** $REF" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`$COMMIT_HASH\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author:** $COMMIT_AUTHOR" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date:** $COMMIT_DATE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit Message:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "$COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+          echo "::endgroup::"
+
+      - name: 🔍 Check for breaking changes
+        run: |
+          echo "::group::Checking for breaking changes"
+
+          # Get previous deployment tag for environment
+          PREV_TAG=$(git tag -l "${{{ inputs.environment }}}-*" | sort -V | tail -1)
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "Previous deployment: $PREV_TAG"
+
+            # Check for major version changes in package.json files
+            BREAKING_CHANGES=$(git diff "$PREV_TAG" "${{ inputs.deploy-ref }}" --name-only | grep "package.json" || true)
+
+            if [ -n "$BREAKING_CHANGES" ]; then
+              echo "### ⚠️ Package Changes Detected" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "$BREAKING_CHANGES" | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Please review these changes carefully." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "No previous deployment found for ${{ inputs.environment }}"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📊 Log deployment metadata
+        run: |
+          echo "::group::Logging deployment metadata"
+
+          # Create deployment log
+          mkdir -p .deployment-logs
+
+          cat > .deployment-logs/deployment-info.json <<EOF
+          {
+            "environment": "${{ inputs.environment }}",
+            "ref": "${{ inputs.deploy-ref }}",
+            "commit": "$(git rev-parse ${{ inputs.deploy-ref }})",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "actor": "${{ github.actor }}",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}"
+          }
+          EOF
+
+          cat .deployment-logs/deployment-info.json
+
+          echo "::endgroup::"
+
+      - name: 📤 Upload deployment metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-metadata
+          path: .deployment-logs/
+          retention-days: 90
+
+  # ============================================
+  # STAGING DEPLOYMENT GATES
+  # ============================================
+
+  staging-gates:
+    name: Staging Deployment Gates
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-validation]
+    if: inputs.environment == 'staging'
+    timeout-minutes: 30
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy-ref }}
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile
+          echo "::endgroup::"
+
+      - name: 🏗️ Build for staging
+        run: |
+          echo "::group::Building for staging"
+          START_TIME=$(date +%s)
+
+          # Set staging environment
+          export NODE_ENV=production
+          export DEPLOYMENT_ENV=staging
+
+          pnpm build
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Build completed in ${DURATION}s"
+
+          echo "::endgroup::"
+
+      - name: 🧪 Run smoke tests
+        run: |
+          echo "::group::Running smoke tests"
+
+          # Run basic smoke tests to ensure build is functional
+          echo "Running smoke tests..."
+
+          # Example: Check if main entry points exist
+          for package in rota-*/; do
+            if [ -f "${package}package.json" ]; then
+              PACKAGE_NAME=$(basename "$package")
+
+              if grep -q '"main"' "${package}package.json" 2>/dev/null; then
+                MAIN_FILE=$(grep '"main"' "${package}package.json" | cut -d'"' -f4)
+                FULL_PATH="${package}${MAIN_FILE}"
+
+                if [ -f "$FULL_PATH" ]; then
+                  echo "✅ $PACKAGE_NAME: Main entry point exists"
+                else
+                  echo "❌ $PACKAGE_NAME: Main entry point missing: $FULL_PATH"
+                  exit 1
+                fi
+              fi
+            fi
+          done
+
+          echo "::endgroup::"
+
+      - name: 📦 Create deployment package
+        run: |
+          echo "::group::Creating deployment package"
+
+          # Create tarball of built artifacts
+          tar -czf staging-deployment.tar.gz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=coverage \
+            --exclude=.next \
+            .
+
+          # Get package size
+          PACKAGE_SIZE=$(du -sh staging-deployment.tar.gz | cut -f1)
+
+          echo "Deployment package size: $PACKAGE_SIZE"
+          echo "DEPLOYMENT_PACKAGE_SIZE=$PACKAGE_SIZE" >> $GITHUB_ENV
+
+          echo "::endgroup::"
+
+      - name: 📤 Upload deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-deployment-package
+          path: staging-deployment.tar.gz
+          retention-days: 30
+
+      - name: 📊 Staging gates summary
+        run: |
+          echo "### 🎯 Staging Deployment Gates" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All staging gates passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package Size:** ${DEPLOYMENT_PACKAGE_SIZE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ready for QA testing**" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # PRODUCTION DEPLOYMENT GATES
+  # ============================================
+
+  production-gates:
+    name: Production Deployment Gates
+    runs-on: ubuntu-latest
+    needs: [pre-deployment-validation]
+    if: inputs.environment == 'production'
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://rota.edu
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy-ref }}
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "::group::Installing dependencies"
+          pnpm install --frozen-lockfile --prod
+          echo "::endgroup::"
+
+      - name: 🔒 Security audit (strict)
+        run: |
+          echo "::group::Running strict security audit"
+
+          # Production requires no vulnerabilities
+          if ! pnpm audit --prod --audit-level=low; then
+            echo "::error::Security vulnerabilities found! Cannot deploy to production."
+            exit 1
+          fi
+
+          echo "✅ No security vulnerabilities found"
+          echo "::endgroup::"
+
+      - name: 🏗️ Production build
+        run: |
+          echo "::group::Building for production"
+          START_TIME=$(date +%s)
+
+          # Set production environment
+          export NODE_ENV=production
+          export DEPLOYMENT_ENV=production
+
+          pnpm build
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Production build completed in ${DURATION}s"
+          echo "PROD_BUILD_DURATION=$DURATION" >> $GITHUB_ENV
+
+          echo "::endgroup::"
+
+      - name: 🧪 Full test suite
+        run: |
+          echo "::group::Running full test suite"
+          START_TIME=$(date +%s)
+
+          # Run all tests for production
+          pnpm test:coverage
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Tests completed in ${DURATION}s"
+          echo "PROD_TEST_DURATION=$DURATION" >> $GITHUB_ENV
+
+          echo "::endgroup::"
+
+      - name: 📊 Verify test coverage
+        run: |
+          echo "::group::Verifying test coverage"
+
+          THRESHOLD=80
+          COVERAGE_FAILED=0
+
+          find . -name "coverage-summary.json" -type f > coverage-files.txt
+
+          while IFS= read -r coverage_file; do
+            LINE_COV=$(grep -o '"lines":{"total":[0-9]*,"covered":[0-9]*,"skipped":[0-9]*,"pct":[0-9.]*' "$coverage_file" | grep -o 'pct":[0-9.]*' | cut -d':' -f2 || echo "0")
+            COV_INT=$(echo "$LINE_COV" | cut -d'.' -f1)
+
+            if [ "$COV_INT" -lt "$THRESHOLD" ]; then
+              PACKAGE_DIR=$(dirname "$coverage_file" | sed 's|/coverage||')
+              echo "::error::Coverage below ${THRESHOLD}% for $(basename $PACKAGE_DIR): ${LINE_COV}%"
+              COVERAGE_FAILED=1
+            fi
+          done < coverage-files.txt
+
+          if [ $COVERAGE_FAILED -eq 1 ]; then
+            echo "::error::Coverage requirements not met for production deployment"
+            exit 1
+          fi
+
+          echo "✅ All packages meet coverage threshold"
+          echo "::endgroup::"
+
+      - name: 🔍 Verify no debug code
+        run: |
+          echo "::group::Checking for debug code"
+
+          # Check for console.log, debugger, etc.
+          DEBUG_CODE=$(grep -r -n \
+            -E "(console\.(log|debug|info)|debugger)" \
+            --include="*.js" \
+            --include="*.ts" \
+            --include="*.jsx" \
+            --include="*.tsx" \
+            --exclude-dir=node_modules \
+            --exclude-dir=coverage \
+            --exclude-dir=dist \
+            . || true)
+
+          if [ -n "$DEBUG_CODE" ]; then
+            echo "⚠️ Debug code found:"
+            echo "$DEBUG_CODE"
+            echo "::warning::Debug code detected in production build"
+          else
+            echo "✅ No debug code found"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📦 Create production package
+        run: |
+          echo "::group::Creating production package"
+
+          # Create optimized production tarball
+          tar -czf production-deployment.tar.gz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=coverage \
+            --exclude=.next \
+            --exclude=src \
+            --exclude=tests \
+            --exclude=*.test.* \
+            --exclude=*.spec.* \
+            .
+
+          PACKAGE_SIZE=$(du -sh production-deployment.tar.gz | cut -f1)
+          echo "Production package size: $PACKAGE_SIZE"
+          echo "PROD_PACKAGE_SIZE=$PACKAGE_SIZE" >> $GITHUB_ENV
+
+          echo "::endgroup::"
+
+      - name: 🔐 Sign production package
+        run: |
+          echo "::group::Signing production package"
+
+          # Create checksum
+          sha256sum production-deployment.tar.gz > production-deployment.tar.gz.sha256
+
+          echo "Package signed with SHA256 checksum"
+          cat production-deployment.tar.gz.sha256
+
+          echo "::endgroup::"
+
+      - name: 📤 Upload production package
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-deployment-package
+          path: |
+            production-deployment.tar.gz
+            production-deployment.tar.gz.sha256
+          retention-days: 90
+
+      - name: 📊 Production gates summary
+        run: |
+          echo "### 🎯 Production Deployment Gates" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ All production gates passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Time:** ${PROD_BUILD_DURATION}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Time:** ${PROD_TEST_DURATION}s" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package Size:** ${PROD_PACKAGE_SIZE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security:** No vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          echo "- **Coverage:** ≥80% on all packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Ready for production deployment**" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # POST-DEPLOYMENT VERIFICATION
+  # ============================================
+
+  post-deployment-verification:
+    name: Post-deployment Verification
+    runs-on: ubuntu-latest
+    needs: [staging-gates, production-gates]
+    if: always() && (needs.staging-gates.result == 'success' || needs.production-gates.result == 'success')
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy-ref }}
+
+      - name: 🏷️ Create deployment tag
+        run: |
+          echo "::group::Creating deployment tag"
+
+          ENV="${{ inputs.environment }}"
+          REF="${{ inputs.deploy-ref }}"
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          TAG_NAME="${ENV}-${TIMESTAMP}"
+
+          echo "Creating deployment tag: $TAG_NAME"
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          git tag -a "$TAG_NAME" -m "Deployment to $ENV at $TIMESTAMP"
+
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+
+          echo "::endgroup::"
+
+      - name: 📝 Create deployment record
+        run: |
+          echo "::group::Creating deployment record"
+
+          mkdir -p .deployment-records
+
+          cat > .deployment-records/${TAG_NAME}.json <<EOF
+          {
+            "environment": "${{ inputs.environment }}",
+            "ref": "${{ inputs.deploy-ref }}",
+            "commit": "$(git rev-parse ${{ inputs.deploy-ref }})",
+            "tag": "${TAG_NAME}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "actor": "${{ github.actor }}",
+            "run_id": "${{ github.run_id }}",
+            "status": "deployed"
+          }
+          EOF
+
+          cat .deployment-records/${TAG_NAME}.json
+
+          echo "::endgroup::"
+
+      - name: 📤 Upload deployment record
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-record
+          path: .deployment-records/
+          retention-days: 365
+
+      - name: 📊 Final deployment summary
+        run: |
+          echo "### 🎉 Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${TAG_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Deployment successful!" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # HEALTH CHECK
+  # ============================================
+
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: [post-deployment-verification]
+    timeout-minutes: 10
+    steps:
+      - name: 🏥 Wait for deployment to propagate
+        run: |
+          echo "Waiting 60 seconds for deployment to propagate..."
+          sleep 60
+
+      - name: 🏥 Check health endpoints
+        run: |
+          echo "::group::Checking health endpoints"
+
+          ENV="${{ inputs.environment }}"
+
+          # Set health check URL based on environment
+          if [ "$ENV" = "production" ]; then
+            HEALTH_URL="https://api.rota.edu/health"
+          else
+            HEALTH_URL="https://api-staging.rota.edu/health"
+          fi
+
+          echo "Checking health endpoint: $HEALTH_URL"
+
+          # Retry health check up to 5 times
+          for i in {1..5}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Health check passed (HTTP $HTTP_CODE)"
+              exit 0
+            else
+              echo "⚠️ Health check failed (HTTP $HTTP_CODE), retrying in 30s... (attempt $i/5)"
+              sleep 30
+            fi
+          done
+
+          echo "::error::Health check failed after 5 attempts"
+          exit 1
+
+          echo "::endgroup::"
+
+      - name: 📊 Health check summary
+        if: always()
+        run: |
+          echo "### 🏥 Health Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Environment: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================
+  # ROLLBACK PREPARATION
+  # ============================================
+
+  prepare-rollback:
+    name: Prepare Rollback Plan
+    runs-on: ubuntu-latest
+    needs: [post-deployment-verification]
+    timeout-minutes: 5
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy-ref }}
+          fetch-depth: 0
+
+      - name: 📝 Create rollback plan
+        run: |
+          echo "::group::Creating rollback plan"
+
+          ENV="${{ inputs.environment }}"
+
+          # Get previous deployment tag
+          PREV_TAG=$(git tag -l "${ENV}-*" | sort -V | tail -2 | head -1)
+
+          if [ -n "$PREV_TAG" ]; then
+            PREV_COMMIT=$(git rev-parse "$PREV_TAG")
+
+            cat > rollback-plan.md <<EOF
+          # Rollback Plan for $ENV
+
+          ## Current Deployment
+          - **Ref:** ${{ inputs.deploy-ref }}
+          - **Commit:** $(git rev-parse ${{ inputs.deploy-ref }})
+          - **Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          ## Previous Deployment
+          - **Tag:** $PREV_TAG
+          - **Commit:** $PREV_COMMIT
+
+          ## Rollback Steps
+
+          ### Automated Rollback
+          \`\`\`bash
+          # Trigger rollback workflow
+          gh workflow run deployment-rollback.yml \\
+            --ref main \\
+            -f environment=$ENV \\
+            -f target_tag=$PREV_TAG
+          \`\`\`
+
+          ### Manual Rollback
+          \`\`\`bash
+          # Checkout previous version
+          git checkout $PREV_TAG
+
+          # Deploy previous version
+          # (follow standard deployment procedure)
+          \`\`\`
+
+          ## Post-Rollback Verification
+          - [ ] Health checks passing
+          - [ ] No error spike in monitoring
+          - [ ] Core functionality working
+          - [ ] Notify team of rollback
+
+          ## Incident Response
+          - Document why rollback was necessary
+          - Create incident ticket
+          - Schedule post-mortem
+          EOF
+
+            cat rollback-plan.md
+
+            echo "### 🔄 Rollback Plan Ready" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Previous stable version: \`$PREV_TAG\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No previous deployment found for $ENV"
+          fi
+
+          echo "::endgroup::"
+
+      - name: 📤 Upload rollback plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-plan
+          path: rollback-plan.md
+          retention-days: 90

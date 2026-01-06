@@ -1,0 +1,181 @@
+name: Reusable TypeCheck
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      pnpm-version:
+        description: 'pnpm version to use'
+        required: false
+        type: string
+        default: '9'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      typescript-command:
+        description: 'TypeScript check command (e.g., "check", "type-check", "typecheck")'
+        required: false
+        type: string
+        default: 'check'
+      fail-fast:
+        description: 'Stop execution on first error'
+        required: false
+        type: boolean
+        default: true
+      generate-report:
+        description: 'Generate TypeScript error report as artifact'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  typecheck:
+    name: TypeScript Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: 📦 Enable Corepack
+        run: |
+          echo "📦 Enabling Corepack for pnpm management..."
+          corepack enable
+
+      - name: 📦 Install pnpm ${{ inputs.pnpm-version }}
+        run: |
+          echo "📦 Installing pnpm version ${{ inputs.pnpm-version }}..."
+          corepack prepare pnpm@${{ inputs.pnpm-version }} --activate
+          echo "✅ pnpm version: $(pnpm --version)"
+
+      - name: 📂 Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "📂 Getting pnpm store directory..."
+          STORE_PATH=$(pnpm store path --silent)
+          echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
+          echo "✅ pnpm store path: $STORE_PATH"
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📥 Installing dependencies with frozen lockfile..."
+          pnpm install --frozen-lockfile
+          echo "✅ Dependencies installed successfully"
+
+      - name: 🔍 Check TypeScript version
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔍 Checking TypeScript version..."
+          if command -v tsc &> /dev/null; then
+            echo "✅ TypeScript version: $(tsc --version)"
+          else
+            echo "⚠️ TypeScript CLI not found in PATH"
+          fi
+
+      - name: 🔎 Run TypeScript type check
+        id: typecheck
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔎 Running TypeScript type check..."
+          echo "📁 Working directory: ${{ inputs.working-directory }}"
+          echo "📝 Command: pnpm ${{ inputs.typescript-command }}"
+
+          # Create error log file
+          ERROR_LOG="typescript-errors.log"
+
+          # Run typecheck and capture output
+          if ! pnpm ${{ inputs.typescript-command }} 2>&1 | tee "$ERROR_LOG"; then
+            echo "❌ TypeScript type check failed"
+            echo "📄 Error log saved to $ERROR_LOG"
+            echo "has_errors=true" >> $GITHUB_OUTPUT
+
+            # Count errors
+            ERROR_COUNT=$(grep -c "error TS" "$ERROR_LOG" || echo "0")
+            echo "❌ Total TypeScript errors: $ERROR_COUNT"
+            echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+
+            if [ "${{ inputs.fail-fast }}" == "true" ]; then
+              exit 1
+            fi
+          else
+            echo "✅ TypeScript type check passed successfully"
+            echo "has_errors=false" >> $GITHUB_OUTPUT
+            echo "error_count=0" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: ${{ !inputs.fail-fast }}
+
+      - name: 📤 Upload TypeScript error report
+        if: inputs.generate-report && steps.typecheck.outputs.has_errors == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-errors-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/typescript-errors.log
+          retention-days: 7
+
+      - name: 💬 Comment error summary on PR
+        if: github.event_name == 'pull_request' && steps.typecheck.outputs.has_errors == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const errorCount = ${{ steps.typecheck.outputs.error_count }};
+            const body = `## ❌ TypeScript Type Check Failed
+
+            **Error Count:** ${errorCount}
+
+            📄 Full error report is available as a workflow artifact.
+
+            **Working Directory:** \`${{ inputs.working-directory }}\`
+            **Command:** \`pnpm ${{ inputs.typescript-command }}\`
+
+            Please fix the type errors and push again.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: 📊 TypeCheck Summary
+        if: always()
+        run: |
+          echo "📊 TypeCheck Job Summary"
+          echo "========================="
+          echo "Node.js version: ${{ inputs.node-version }}"
+          echo "pnpm version: ${{ inputs.pnpm-version }}"
+          echo "Working directory: ${{ inputs.working-directory }}"
+          echo "TypeScript command: ${{ inputs.typescript-command }}"
+          echo "Fail fast: ${{ inputs.fail-fast }}"
+          echo "Has errors: ${{ steps.typecheck.outputs.has_errors }}"
+          echo "Error count: ${{ steps.typecheck.outputs.error_count }}"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ TypeScript type check passed!"
+          else
+            echo "❌ TypeScript type check failed"
+            exit 1
+          fi

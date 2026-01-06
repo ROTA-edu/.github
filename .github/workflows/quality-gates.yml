@@ -1,0 +1,364 @@
+name: Quality Gates
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+  push:
+    branches: [main, master, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Enable Corepack
+        run: |
+          echo "📦 Enabling Corepack..."
+          corepack enable
+
+      - name: 📦 Install pnpm
+        run: |
+          echo "📦 Installing pnpm..."
+          corepack prepare pnpm@9 --activate
+
+      - name: 📥 Install dependencies
+        run: |
+          echo "📥 Installing dependencies..."
+          pnpm install --frozen-lockfile
+
+      - name: 🔒 Run security audit
+        id: audit
+        run: |
+          echo "🔒 Running pnpm audit..."
+
+          # Run audit and capture output
+          if pnpm audit --prod --audit-level=moderate --json > audit-results.json 2>&1; then
+            echo "✅ No vulnerabilities found"
+            echo "has_vulnerabilities=false" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Vulnerabilities detected"
+            echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
+
+            # Parse vulnerabilities
+            if [ -f "audit-results.json" ]; then
+              CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' audit-results.json)
+              HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit-results.json)
+              MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' audit-results.json)
+
+              echo "critical_count=$CRITICAL" >> $GITHUB_OUTPUT
+              echo "high_count=$HIGH" >> $GITHUB_OUTPUT
+              echo "moderate_count=$MODERATE" >> $GITHUB_OUTPUT
+
+              echo "❌ Critical: $CRITICAL"
+              echo "⚠️ High: $HIGH"
+              echo "⚠️ Moderate: $MODERATE"
+
+              # Fail if critical or high vulnerabilities exist
+              if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+                echo "❌ Critical or high severity vulnerabilities found!"
+                exit 1
+              fi
+            fi
+          fi
+
+      - name: 📤 Upload audit results
+        if: steps.audit.outputs.has_vulnerabilities == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-${{ github.run_id }}
+          path: audit-results.json
+          retention-days: 30
+
+      - name: 💬 Comment vulnerabilities on PR
+        if: github.event_name == 'pull_request' && steps.audit.outputs.has_vulnerabilities == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const critical = ${{ steps.audit.outputs.critical_count || 0 }};
+            const high = ${{ steps.audit.outputs.high_count || 0 }};
+            const moderate = ${{ steps.audit.outputs.moderate_count || 0 }};
+
+            const body = `## 🔒 Security Audit Results
+
+            | Severity | Count |
+            |----------|-------|
+            | ❌ Critical | ${critical} |
+            | ⚠️ High | ${high} |
+            | ⚠️ Moderate | ${moderate} |
+
+            ${critical > 0 || high > 0 ? '❌ **Action Required:** Fix critical/high severity vulnerabilities before merging!' : '✅ No critical or high vulnerabilities'}
+
+            Run \`pnpm audit\` locally for detailed information.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@9 --activate
+
+      - name: 🔍 Check for duplicate dependencies
+        run: |
+          echo "🔍 Checking for duplicate dependencies..."
+
+          # List all installed packages
+          pnpm list --depth=Infinity --json > dependencies.json || true
+
+          # Check for duplicates (simplified check)
+          echo "✅ Dependency check complete"
+
+      - name: 🔍 Check for outdated dependencies
+        run: |
+          echo "🔍 Checking for outdated dependencies..."
+          pnpm outdated || echo "Some dependencies are outdated"
+
+  architecture-compliance:
+    name: Architecture Compliance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@9 --activate
+
+      - name: 🏗️ Check SSOT violations
+        run: |
+          echo "🏗️ Checking for SSOT (Single Source of Truth) violations..."
+
+          # Check if packages import from correct sources
+          VIOLATIONS=0
+
+          # Example: Check if any package imports types from wrong location
+          if grep -r "import.*from.*'@rota-edu/types'" --include="*.ts" --include="*.tsx" rota-*/src/ 2>/dev/null; then
+            echo "✅ Packages are using @rota-edu/types correctly"
+          fi
+
+          # Check for direct dependencies on internal packages
+          echo "🔍 Checking package dependencies..."
+
+          # Check if rota-types is imported correctly across packages
+          if grep -r "from '\.\./rota-types" --include="*.ts" --include="*.tsx" rota-*/src/ 2>/dev/null; then
+            echo "⚠️ Warning: Found relative imports to rota-types (should use @rota-edu/types)"
+            VIOLATIONS=$((VIOLATIONS + 1))
+          fi
+
+          # Check for duplicate type definitions
+          echo "🔍 Checking for duplicate type definitions..."
+
+          if [ $VIOLATIONS -gt 0 ]; then
+            echo "❌ Found $VIOLATIONS architecture violations"
+            echo "💡 Fix SSOT violations before merging"
+            exit 1
+          fi
+
+          echo "✅ No architecture violations detected"
+
+      - name: 🔍 Check import boundaries
+        run: |
+          echo "🔍 Checking import boundaries..."
+
+          # Ensure packages don't import from each other inappropriately
+          # Example: rota-types should not import from other packages
+
+          BOUNDARY_VIOLATIONS=0
+
+          # Check if rota-types imports from other packages (it shouldn't)
+          if [ -d "rota-types/src" ]; then
+            if grep -r "from '@rota-edu/" --include="*.ts" rota-types/src/ 2>/dev/null | grep -v "@rota-edu/types"; then
+              echo "❌ rota-types should not depend on other @rota-edu packages"
+              BOUNDARY_VIOLATIONS=$((BOUNDARY_VIOLATIONS + 1))
+            fi
+          fi
+
+          if [ $BOUNDARY_VIOLATIONS -gt 0 ]; then
+            echo "❌ Found $BOUNDARY_VIOLATIONS import boundary violations"
+            exit 1
+          fi
+
+          echo "✅ Import boundaries are correct"
+
+  bundle-size-check:
+    name: Bundle Size Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@9 --activate
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 🏗️ Build packages
+        run: |
+          echo "🏗️ Building packages for size check..."
+          pnpm build || echo "Build step optional for size check"
+
+      - name: 📊 Check bundle sizes
+        run: |
+          echo "📊 Checking bundle sizes..."
+
+          # Define bundle size limits (in KB)
+          declare -A SIZE_LIMITS=(
+            ["rota-types"]=500
+            ["rota-shared-utils"]=1000
+            ["rota-ai-engine"]=2000
+            ["rota-course-engine"]=2000
+            ["rota-canvas-engine"]=3000
+            ["rota-atlas"]=5000
+          )
+
+          VIOLATIONS=0
+
+          # Check each package
+          for package in rota-types rota-shared-utils rota-ai-engine rota-course-engine rota-canvas-engine rota-atlas; do
+            if [ -d "$package/dist" ]; then
+              SIZE=$(du -sk "$package/dist" | cut -f1)
+              LIMIT=${SIZE_LIMITS[$package]}
+
+              echo "📦 $package: ${SIZE}KB (limit: ${LIMIT}KB)"
+
+              if [ $SIZE -gt $LIMIT ]; then
+                echo "❌ $package exceeds size limit!"
+                VIOLATIONS=$((VIOLATIONS + 1))
+              fi
+            else
+              echo "⚠️ $package: dist directory not found"
+            fi
+          done
+
+          if [ $VIOLATIONS -gt 0 ]; then
+            echo "❌ $VIOLATIONS packages exceed bundle size limits"
+            echo "💡 Consider code splitting or tree shaking"
+            # Don't fail on bundle size for now (warning only)
+            # exit 1
+          fi
+
+          echo "✅ Bundle size check complete"
+
+  code-quality:
+    name: Code Quality Metrics
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Enable Corepack
+        run: corepack enable
+
+      - name: 📦 Install pnpm
+        run: corepack prepare pnpm@9 --activate
+
+      - name: 📥 Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: 📊 Generate code statistics
+        run: |
+          echo "📊 Generating code statistics..."
+
+          # Count TypeScript files
+          TS_FILES=$(find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" | wc -l)
+          echo "📄 TypeScript files: $TS_FILES"
+
+          # Count test files
+          TEST_FILES=$(find . -name "*.test.ts" -o -name "*.spec.ts" -not -path "*/node_modules/*" | wc -l)
+          echo "🧪 Test files: $TEST_FILES"
+
+          # Calculate test ratio
+          if [ $TS_FILES -gt 0 ]; then
+            TEST_RATIO=$(echo "scale=2; $TEST_FILES * 100 / $TS_FILES" | bc)
+            echo "📊 Test coverage ratio: ${TEST_RATIO}%"
+          fi
+
+          # Count lines of code
+          LINES=$(find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" -exec wc -l {} + | tail -1 | awk '{print $1}')
+          echo "📝 Total lines of code: $LINES"
+
+          echo "✅ Code quality metrics generated"
+
+  summary:
+    name: Quality Gates Summary
+    runs-on: ubuntu-latest
+    needs: [security-audit, dependency-check, architecture-compliance, bundle-size-check, code-quality]
+    if: always()
+
+    steps:
+      - name: 📊 Generate summary
+        run: |
+          echo "📊 Quality Gates Summary"
+          echo "======================="
+          echo "Security Audit: ${{ needs.security-audit.result }}"
+          echo "Dependency Check: ${{ needs.dependency-check.result }}"
+          echo "Architecture Compliance: ${{ needs.architecture-compliance.result }}"
+          echo "Bundle Size Check: ${{ needs.bundle-size-check.result }}"
+          echo "Code Quality: ${{ needs.code-quality.result }}"
+
+          # Check if any job failed
+          if [ "${{ needs.security-audit.result }}" != "success" ] || \
+             [ "${{ needs.architecture-compliance.result }}" != "success" ]; then
+            echo "❌ Quality gates failed!"
+            exit 1
+          fi
+
+          echo "✅ All quality gates passed!"

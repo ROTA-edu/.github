@@ -1,0 +1,162 @@
+name: Test Coverage Enforcement
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  test-coverage:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # Run all tests even if one fails
+      matrix:
+        package:
+          - rota-types
+          - rota-shared-utils
+          - rota-ai-engine
+          - rota-canvas-engine
+          - rota-course-engine
+          - rota-orchestrator
+          - rota-atlas
+
+    name: Test ${{ matrix.package }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests with coverage
+        id: test
+        working-directory: ${{ matrix.package }}
+        run: |
+          pnpm run test:ci || echo "TEST_FAILED=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Check coverage thresholds
+        id: coverage
+        working-directory: ${{ matrix.package }}
+        run: |
+          if [ -f "coverage/coverage-summary.json" ]; then
+            node -e "
+              const coverage = require('./coverage/coverage-summary.json');
+              const total = coverage.total;
+
+              const thresholds = {
+                lines: 80,
+                statements: 80,
+                functions: 80,
+                branches: 75
+              };
+
+              let failed = false;
+              let output = '## Coverage Report: ${{ matrix.package }}\n\n';
+              output += '| Metric | Coverage | Threshold | Status |\n';
+              output += '|--------|----------|-----------|--------|\n';
+
+              for (const [metric, threshold] of Object.entries(thresholds)) {
+                const actual = total[metric].pct;
+                const status = actual >= threshold ? '✅' : '❌';
+                output += \`| ${metric} | ${actual.toFixed(2)}% | ${threshold}% | ${status} |\n\`;
+
+                if (actual < threshold) {
+                  console.error(\`❌ ${metric}: \${actual.toFixed(2)}% < \${threshold}%\`);
+                  failed = true;
+                } else {
+                  console.log(\`✅ ${metric}: \${actual.toFixed(2)}% >= \${threshold}%\`);
+                }
+              }
+
+              // Write to GitHub output
+              const fs = require('fs');
+              fs.writeFileSync(process.env.GITHUB_OUTPUT, \`coverage_report<<EOF\n\${output}\nEOF\n\`, { flag: 'a' });
+
+              if (failed) {
+                console.error('\n❌ Coverage thresholds not met');
+                process.exit(1);
+              }
+            "
+          else
+            echo "⚠️ No coverage report found - tests may not have run"
+            echo "coverage_report=⚠️ No coverage data available for ${{ matrix.package }}" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ${{ matrix.package }}/coverage/lcov.info
+          flags: ${{ matrix.package }}
+          name: ${{ matrix.package }}-coverage
+          fail_ci_if_error: false
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverageReport = `${{ steps.coverage.outputs.coverage_report }}`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Coverage Report: ${{ matrix.package }}')
+            );
+
+            const commentBody = coverageReport;
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: commentBody
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: commentBody
+              });
+            }
+
+      - name: Fail if coverage below threshold
+        if: steps.coverage.outcome == 'failure'
+        run: exit 1
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: test-coverage
+    if: always()
+    steps:
+      - name: Test Summary
+        run: |
+          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All package tests completed. Check individual job results for details." >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,252 @@
+name: Reusable Build
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      pnpm-version:
+        description: 'pnpm version to use'
+        required: false
+        type: string
+        default: '9'
+      working-directory:
+        description: 'Working directory for commands'
+        required: false
+        type: string
+        default: '.'
+      build-output-dir:
+        description: 'Expected build output directory'
+        required: false
+        type: string
+        default: 'dist'
+      verify-build:
+        description: 'Verify build output exists'
+        required: false
+        type: boolean
+        default: true
+      upload-artifact:
+        description: 'Upload build artifact'
+        required: false
+        type: boolean
+        default: false
+      artifact-retention-days:
+        description: 'Days to retain build artifact'
+        required: false
+        type: number
+        default: 7
+      fail-fast:
+        description: 'Stop execution on first error'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: 📦 Enable Corepack
+        run: |
+          echo "📦 Enabling Corepack for pnpm management..."
+          corepack enable
+
+      - name: 📦 Install pnpm ${{ inputs.pnpm-version }}
+        run: |
+          echo "📦 Installing pnpm version ${{ inputs.pnpm-version }}..."
+          corepack prepare pnpm@${{ inputs.pnpm-version }} --activate
+          echo "✅ pnpm version: $(pnpm --version)"
+
+      - name: 📂 Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "📂 Getting pnpm store directory..."
+          STORE_PATH=$(pnpm store path --silent)
+          echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
+          echo "✅ pnpm store path: $STORE_PATH"
+
+      - name: 🗄️ Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: 📥 Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📥 Installing dependencies with frozen lockfile..."
+          pnpm install --frozen-lockfile
+          echo "✅ Dependencies installed successfully"
+
+      - name: 🏗️ Build package
+        id: build
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🏗️ Building package..."
+          echo "📁 Working directory: ${{ inputs.working-directory }}"
+          echo "📦 Output directory: ${{ inputs.build-output-dir }}"
+
+          # Record start time
+          BUILD_START=$(date +%s)
+
+          if ! pnpm build; then
+            echo "❌ Build failed"
+            exit 1
+          fi
+
+          # Calculate build duration
+          BUILD_END=$(date +%s)
+          BUILD_DURATION=$((BUILD_END - BUILD_START))
+          echo "build_duration=${BUILD_DURATION}" >> $GITHUB_OUTPUT
+
+          echo "✅ Build completed successfully in ${BUILD_DURATION}s"
+        continue-on-error: ${{ !inputs.fail-fast }}
+
+      - name: ✅ Verify build output
+        if: inputs.verify-build
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "✅ Verifying build output..."
+          echo "📦 Expected output directory: ${{ inputs.build-output-dir }}"
+
+          if [ ! -d "${{ inputs.build-output-dir }}" ]; then
+            echo "❌ Build failed: ${{ inputs.build-output-dir }}/ directory not found"
+            exit 1
+          fi
+
+          echo "✅ Build output directory exists"
+
+          # List build output files
+          echo "📄 Build output files:"
+          ls -lah "${{ inputs.build-output-dir }}/" || true
+
+          # Count files
+          FILE_COUNT=$(find "${{ inputs.build-output-dir }}" -type f | wc -l)
+          echo "📊 Total files in build output: $FILE_COUNT"
+
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "⚠️ Warning: Build output directory is empty"
+            exit 1
+          fi
+
+          echo "✅ Build verification successful"
+
+      - name: 📊 Analyze build size
+        if: inputs.verify-build
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "📊 Analyzing build size..."
+
+          if [ -d "${{ inputs.build-output-dir }}" ]; then
+            # Calculate total size
+            TOTAL_SIZE=$(du -sh "${{ inputs.build-output-dir }}" | cut -f1)
+            echo "📦 Total build size: $TOTAL_SIZE"
+
+            # List largest files
+            echo "📄 Largest files in build:"
+            find "${{ inputs.build-output-dir }}" -type f -exec du -h {} + | sort -rh | head -10 || true
+
+            # Check for source maps
+            SOURCE_MAP_COUNT=$(find "${{ inputs.build-output-dir }}" -name "*.map" | wc -l)
+            echo "🗺️ Source maps: $SOURCE_MAP_COUNT files"
+
+            # Check for TypeScript declarations
+            DTS_COUNT=$(find "${{ inputs.build-output-dir }}" -name "*.d.ts" | wc -l)
+            echo "📝 TypeScript declarations: $DTS_COUNT files"
+          else
+            echo "⚠️ Build output directory not found for size analysis"
+          fi
+
+      - name: 🔍 Check for common build issues
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          echo "🔍 Checking for common build issues..."
+
+          # Check for node_modules in build output
+          if find "${{ inputs.build-output-dir }}" -name "node_modules" -type d 2>/dev/null | grep -q .; then
+            echo "⚠️ Warning: node_modules found in build output"
+          fi
+
+          # Check for test files in build output
+          if find "${{ inputs.build-output-dir }}" -name "*.test.*" -o -name "*.spec.*" 2>/dev/null | grep -q .; then
+            echo "⚠️ Warning: Test files found in build output"
+          fi
+
+          # Check for .env files in build output
+          if find "${{ inputs.build-output-dir }}" -name ".env*" 2>/dev/null | grep -q .; then
+            echo "❌ Error: .env files found in build output (security risk)"
+            exit 1
+          fi
+
+          echo "✅ No common build issues detected"
+
+      - name: 📤 Upload build artifact
+        if: inputs.upload-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ inputs.working-directory }}-${{ github.run_id }}
+          path: ${{ inputs.working-directory }}/${{ inputs.build-output-dir }}/
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error
+
+      - name: 💬 Comment build info on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildDuration = ${{ steps.build.outputs.build_duration || 0 }};
+            const workingDir = '${{ inputs.working-directory }}';
+
+            const body = `## ✅ Build Successful
+
+            **Working Directory:** \`${workingDir}\`
+            **Build Duration:** ${buildDuration}s
+            **Build Output:** \`${{ inputs.build-output-dir }}/\`
+
+            ${buildDuration > 60 ? '⚠️ Build took longer than 1 minute' : '✅ Build completed quickly'}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: 📊 Build Summary
+        if: always()
+        run: |
+          echo "📊 Build Job Summary"
+          echo "===================="
+          echo "Node.js version: ${{ inputs.node-version }}"
+          echo "pnpm version: ${{ inputs.pnpm-version }}"
+          echo "Working directory: ${{ inputs.working-directory }}"
+          echo "Build output dir: ${{ inputs.build-output-dir }}"
+          echo "Verify build: ${{ inputs.verify-build }}"
+          echo "Upload artifact: ${{ inputs.upload-artifact }}"
+          echo "Build duration: ${{ steps.build.outputs.build_duration }}s"
+          echo "Fail fast: ${{ inputs.fail-fast }}"
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Build completed successfully!"
+          else
+            echo "❌ Build failed"
+            exit 1
+          fi

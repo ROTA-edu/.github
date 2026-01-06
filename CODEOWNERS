@@ -1,0 +1,180 @@
+# Code Owners
+# This file defines individuals or teams responsible for code in this repository.
+# Code owners are automatically requested for review when someone opens a pull request
+# that modifies code that they own.
+#
+# More info: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repo
+# These owners will be the default owners for everything unless a later match takes precedence
+*       @ROTA-edu/tech-leads
+
+# ============================================
+# CORE PACKAGES
+# ============================================
+
+# Type definitions - Critical for API contracts
+/rota-types/**                          @ROTA-edu/architecture-team @ROTA-edu/tech-leads
+
+# Orchestrator - Event-driven system
+/rota-orchestrator/**                   @ROTA-edu/backend-team @ROTA-edu/architecture-team
+
+# AI Engine - Critical AI functionality
+/rota-ai-engine/**                      @ROTA-edu/ai-team @ROTA-edu/backend-team
+
+# Canvas Engine - Drawing and collaboration
+/rota-canvas-engine/**                  @ROTA-edu/frontend-team
+
+# Course Engine - Core learning functionality
+/rota-course-engine/**                  @ROTA-edu/backend-team @ROTA-edu/product-team
+
+# Course Creator - Content creation tools
+/rota-course-creator/**                 @ROTA-edu/fullstack-team @ROTA-edu/product-team
+
+# ============================================
+# PLATFORM & APPLICATIONS
+# ============================================
+
+# Main platform application
+/rota-platform/**                       @ROTA-edu/fullstack-team
+
+# Landing page
+/rota-landing/**                        @ROTA-edu/frontend-team @ROTA-edu/marketing-team
+
+# Atlas documentation
+/rota-atlas/**                          @ROTA-edu/tech-writers @ROTA-edu/tech-leads
+
+# Documentation
+/rota-docs/**                           @ROTA-edu/tech-writers
+
+# ============================================
+# UTILITIES & SHARED CODE
+# ============================================
+
+# Shared utilities
+/rota-shared-utils/**                   @ROTA-edu/backend-team
+
+# Server utilities
+/rota-server-utils/**                   @ROTA-edu/backend-team
+
+# ============================================
+# CONFIGURATION
+# ============================================
+
+# ESLint config - Affects code quality across all packages
+/rota-config/eslint-config-rota/**      @ROTA-edu/tech-leads
+
+# Prettier config - Affects formatting across all packages
+/rota-config/prettier-config-rota/**    @ROTA-edu/tech-leads
+
+# TypeScript config - Affects type checking across all packages
+/rota-config/tsconfig-rota/**           @ROTA-edu/tech-leads @ROTA-edu/architecture-team
+
+# ============================================
+# INFRASTRUCTURE & DEVOPS
+# ============================================
+
+# GitHub workflows and actions
+/.github/**                             @ROTA-edu/devops-team @ROTA-edu/tech-leads
+
+# Docker configuration
+/docker/**                              @ROTA-edu/devops-team
+/Dockerfile                             @ROTA-edu/devops-team
+/.dockerignore                          @ROTA-edu/devops-team
+
+# CI/CD and quality gates
+/.husky/**                              @ROTA-edu/devops-team
+/.commitlintrc.json                     @ROTA-edu/devops-team
+
+# Kubernetes/deployment configs
+/k8s/**                                 @ROTA-edu/devops-team
+/helm/**                                @ROTA-edu/devops-team
+
+# ============================================
+# ROOT CONFIGURATION FILES
+# ============================================
+
+# Package management
+/package.json                           @ROTA-edu/tech-leads
+/pnpm-workspace.yaml                    @ROTA-edu/tech-leads
+/pnpm-lock.yaml                         @ROTA-edu/tech-leads
+
+# Environment and secrets
+/.env.example                           @ROTA-edu/devops-team
+/.env.template                          @ROTA-edu/devops-team
+
+# Git configuration
+/.gitignore                             @ROTA-edu/tech-leads
+/.gitattributes                         @ROTA-edu/tech-leads
+
+# Editor configuration
+/.editorconfig                          @ROTA-edu/tech-leads
+/.vscode/**                             @ROTA-edu/tech-leads
+
+# ============================================
+# SECURITY & COMPLIANCE
+# ============================================
+
+# Security policies
+/SECURITY.md                            @ROTA-edu/security-team @ROTA-edu/tech-leads
+/LICENSE                                @ROTA-edu/legal-team @ROTA-edu/tech-leads
+
+# Dependency security
+/renovate.json                          @ROTA-edu/devops-team
+/.snyk                                  @ROTA-edu/security-team
+
+# ============================================
+# TESTING
+# ============================================
+
+# Test configuration files
+/jest.config.js                         @ROTA-edu/tech-leads
+/vitest.config.ts                       @ROTA-edu/tech-leads
+/.nycrc                                 @ROTA-edu/tech-leads
+
+# E2E tests
+/e2e/**                                 @ROTA-edu/qa-team @ROTA-edu/fullstack-team
+/cypress/**                             @ROTA-edu/qa-team @ROTA-edu/fullstack-team
+/playwright/**                          @ROTA-edu/qa-team @ROTA-edu/fullstack-team
+
+# ============================================
+# DOCUMENTATION
+# ============================================
+
+# Main README
+/README.md                              @ROTA-edu/tech-leads @ROTA-edu/tech-writers
+
+# Contributing guidelines
+/CONTRIBUTING.md                        @ROTA-edu/tech-leads
+
+# Architecture documentation
+/docs/architecture/**                   @ROTA-edu/architecture-team @ROTA-edu/tech-leads
+
+# API documentation
+/docs/api/**                            @ROTA-edu/backend-team @ROTA-edu/tech-writers
+
+# ============================================
+# DATABASE & MIGRATIONS
+# ============================================
+
+# Database migrations - Critical for data integrity
+/migrations/**                          @ROTA-edu/backend-team @ROTA-edu/dba-team
+/prisma/**                              @ROTA-edu/backend-team @ROTA-edu/dba-team
+/drizzle/**                             @ROTA-edu/backend-team @ROTA-edu/dba-team
+
+# Database seeds
+/seeds/**                               @ROTA-edu/backend-team
+
+# ============================================
+# BUILD & DEPLOYMENT
+# ============================================
+
+# Build configuration
+/webpack.config.js                      @ROTA-edu/devops-team
+/vite.config.ts                         @ROTA-edu/frontend-team
+/rollup.config.js                       @ROTA-edu/devops-team
+/tsconfig.build.json                    @ROTA-edu/tech-leads
+
+# Deployment scripts
+/scripts/deploy/**                      @ROTA-edu/devops-team
+/scripts/build/**                       @ROTA-edu/devops-team
