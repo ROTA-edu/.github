@@ -348,9 +348,9 @@ jobs:
 
   summary:
     name: Quality Gates Summary
+    if: always() && github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     needs: [security-audit, dependency-check, architecture-compliance, bundle-size-check, code-quality]
-    if: always()
 
     steps:
       - name: 📊 Generate summary
