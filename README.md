@@ -2,7 +2,7 @@
 
 This repository contains the central documentation, reusable workflows, and shared actions for all ROTA repositories.
 
-## 📚 Documentation
+## Documentation
 
 All organizational documentation lives in [`docs/`](./docs/):
 
@@ -10,7 +10,7 @@ All organizational documentation lives in [`docs/`](./docs/):
 - **[Architecture](./docs/architecture/POLYREPO_ARCHITECTURE.md)** - System design and repo structure
 - **[Guidelines](./docs/guidelines/)** - Coding standards, testing, CI/CD, git workflow
 
-## 🔄 Reusable Workflows
+## Reusable Workflows
 
 Located in [`.github/workflows/`](./.github/workflows/):
 
@@ -39,7 +39,7 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-## 🤖 Custom AI Agents
+## Custom AI Agents
 
 Located in [`actions/`](./actions/):
 
@@ -96,7 +96,7 @@ Comprehensive PR code review.
 
 **Cost:** ~$2-7/month per repo (using cheap models)
 
-## 🏗️ Repository Structure
+## Repository Structure
 
 ```
 .github/
@@ -117,7 +117,7 @@ Comprehensive PR code review.
 └── README.md               # This file
 ```
 
-## 🚀 Quick Start for New Repos
+## Quick Start for New Repos
 
 1. **Copy workflow template:**
    ```bash
@@ -129,15 +129,15 @@ Comprehensive PR code review.
 3. **Enable branch protection:**
    - Settings → Branches → Add rule
    - Branch name pattern: `main`
-   - ✅ Require pull request before merging
-   - ✅ Require status checks to pass
+   - Require pull request before merging
+   - Require status checks to pass
 
 4. **Add secrets** (if using AI features):
    ```bash
    gh secret set ANTHROPIC_API_KEY -b"sk-ant-..." --repo ROTA-edu/your-repo
    ```
 
-## 📝 Contributing
+## Contributing
 
 ### Documentation Updates
 
@@ -152,7 +152,7 @@ Comprehensive PR code review.
 2. Create PR with explanation of changes
 3. Update version tags after merge
 
-## 📋 Resources
+## Resources
 
 - [ROTA Organization](https://github.com/ROTA-edu)
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)

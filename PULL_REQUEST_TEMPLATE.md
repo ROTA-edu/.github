@@ -6,17 +6,17 @@
 
 <!-- Mark the relevant option with an 'x' -->
 
-- [ ] 🐛 Bug fix (non-breaking change which fixes an issue)
-- [ ] ✨ New feature (non-breaking change which adds functionality)
-- [ ] 💥 Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] 📝 Documentation update
-- [ ] 🎨 Style/UI update (no functional changes)
-- [ ] ♻️ Refactoring (no functional changes)
-- [ ] ⚡ Performance improvement
-- [ ] ✅ Test update
-- [ ] 🔧 Build/configuration change
-- [ ] 🔄 CI/CD change
-- [ ] 🧹 Chore (maintenance tasks)
+- [ ] Bug fix (non-breaking change which fixes an issue)
+- [ ] New feature (non-breaking change which adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+- [ ] Style/UI update (no functional changes)
+- [ ] Refactoring (no functional changes)
+- [ ] Performance improvement
+- [ ] Test update
+- [ ] Build/configuration change
+- [ ] CI/CD change
+- [ ] Chore (maintenance tasks)
 
 ## Related Issues
 

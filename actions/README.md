@@ -68,7 +68,7 @@ Custom AI-powered automation actions for ROTA repositories.
 
 ### 3. AI Code Review
 **Path:** `ai-code-review/`
-**Model:** Claude 3.5 Sonnet (Anthropic API)
+**Model:** GLM-4.7 (OpenRouter)
 **Purpose:** Comprehensive PR code review
 
 **Features:**
@@ -81,7 +81,7 @@ Custom AI-powered automation actions for ROTA repositories.
 ```yaml
 - uses: ROTA-edu/.github/actions/ai-code-review@v1
   with:
-    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
     focus-areas: 'security,performance,testing'
 ```
 
@@ -94,11 +94,8 @@ Custom AI-powered automation actions for ROTA repositories.
 All repos using these actions need:
 
 ```bash
-# OpenRouter API (for wiki + bug-finder)
+# OpenRouter API (for wiki, bug-finder, and code-review)
 gh secret set OPENROUTER_API_KEY -b"sk-or-..." --repo ROTA-edu/your-repo
-
-# Anthropic API (for code review)
-gh secret set ANTHROPIC_API_KEY -b"sk-ant-..." --repo ROTA-edu/your-repo
 
 # GitHub token is auto-provided
 ```
