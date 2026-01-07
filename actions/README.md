@@ -27,8 +27,8 @@ Custom AI-powered automation actions for ROTA repositories.
 - uses: ROTA-edu/.github/actions/wiki-issue-agent@v1
   with:
     openrouter-api-key: ${{ secrets.OPENROUTER_API_KEY }}
-    mode: 'wiki'  # or 'issue'
-    issue-number: 123  # required for issue mode
+    mode: 'wiki'
+    push-to-wiki: 'true'  # Directly update Wiki instead of creating an Issue
 ```
 
 ---
@@ -110,7 +110,8 @@ gh secret set OPENROUTER_API_KEY -b"sk-or-..." --repo ROTA-edu/your-repo
 | Issue Agent | Per issue (~20/month) | ~$0.005 | $0.10 |
 | Bug Finder (Daily) | Daily (30x/month) | ~$0.02 | $0.60 |
 | Bug Finder (PR) | Per PR (~40/month) | ~$0.03 | $1.20 |
-| **Total** | | | **~$2/month** |
+| Code Review | Per PR (~40/month) | ~$0.05 | $2.00 |
+| **Total** | | | **~$4/month** |
 
 *Using cheap models (DeepSeek, Grok) keeps costs minimal!*
 
@@ -133,6 +134,7 @@ gh secret set OPENROUTER_API_KEY -b"sk-or-..." --repo ROTA-edu/your-repo
 - ✅ Cache API responses where possible
 - ✅ Fail gracefully if API is down
 - ✅ Add timeout limits (max 5 minutes)
+- ✅ **CI Isolation:** Workflows in this repo are calibrated to skip on the infra-repo itself to avoid environment errors.
 - ❌ Don't call expensive models on every commit
 - ❌ Don't expose API keys in logs
 

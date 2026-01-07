@@ -1,5 +1,5 @@
 name: 'Bug Finder Agent'
-description: 'Daily code scan for bugs and security issues using Grok Code Fast 1'
+description: 'High-speed code audit for bugs and security issues using Grok Code Fast 1'
 author: 'ROTA Team'
 
 inputs:

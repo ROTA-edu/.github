@@ -16,6 +16,10 @@ inputs:
   issue-number:
     description: 'Issue number (for issue mode)'
     required: false
+  push-to-wiki:
+    description: 'Directly push suggestions to GitHub Wiki (default: false)'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -44,10 +48,10 @@ runs:
           "model": "deepseek/deepseek-v3.2",
           "messages": [{
             "role": "system",
-            "content": "You are a technical documentation expert. Analyze code changes and update wiki/documentation accordingly. Be concise and technical."
+            "content": "You are a technical documentation expert. Analyze code changes and update wiki/documentation accordingly. Be concise and technical. Output in clean Markdown."
           }, {
             "role": "user",
-            "content": "# Task\nAnalyze these recent changes and suggest wiki updates.\n\n## Recent Commits (Last 7 Days)\n$COMMITS\n\n## Changed Files\n$CHANGED_FILES\n\n## Current README (first 100 lines)\n\`\`\`markdown\n$README_CONTENT\n\`\`\`\n\n## Instructions\n1. Identify if documentation needs updating\n2. Suggest specific wiki page updates\n3. Generate new documentation sections if needed\n4. Keep it concise and actionable\n\n## Output Format\n### Changes Detected\n- ...\n\n### Recommended Wiki Updates\n#### Page: [page-name]\n- Update: ...\n- New section: ...\n\n### New Documentation Needed\n- ..."
+            "content": "# Task\nAnalyze these recent changes and suggest wiki updates.\n\n## Recent Commits (Last 7 Days)\n$COMMITS\n\n## Changed Files\n$CHANGED_FILES\n\n## Current README (first 100 lines)\n\`\`\`markdown\n$README_CONTENT\n\`\`\`\n\n## Instructions\n1. Identify if documentation needs updating\n2. Highlight specific changes\n3. Provide a summary for the wiki\n\n## Output Format\n### Changes Detected\n- ...\n\n### Wiki Content\n[Your detailed markdown content here]"
           }]
         }
         EOF
@@ -55,14 +59,32 @@ runs:
 
         echo "$WIKI_UPDATE" > wiki-suggestions.md
 
-        # Post as issue if significant changes detected
-        if echo "$WIKI_UPDATE" | grep -q "Recommended Wiki Updates"; then
-          gh issue create \
-            --title "📚 Wiki Update Needed (Auto-generated)" \
-            --body "$(cat wiki-suggestions.md)" \
-            --label "documentation,auto-generated" || true
+        # Handle Wiki Push or Issue Creation
+        if [ "${{ inputs.push-to-wiki }}" == "true" ]; then
+          echo "🚀 Pushing to GitHub Wiki..."
+          
+          # Setup git config
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Clone Wiki
+          git clone "https://x-access-token:${{ inputs.github-token }}@github.com/${{ github.repository }}.wiki.git" wiki_repo
+          
+          # Extract Wiki Content (everything after the header)
+          sed -n '/### Wiki Content/,$p' wiki-suggestions.md | tail -n +2 > wiki_repo/AutoUpdates.md
+          
+          cd wiki_repo
+          git add .
+          git commit -m "🤖 AI Auto-update: Recent Changes $(date +%Y-%m-%d)" || exit 0
+          git push origin master || git push origin main
         else
-          echo "✅ No wiki updates needed this week"
+          # Post as issue if significant changes detected
+          if echo "$WIKI_UPDATE" | grep -q "Wiki Content"; then
+            gh issue create \
+              --title "📚 Wiki Update Needed (Auto-generated)" \
+              --body "$(cat wiki-suggestions.md)" \
+              --label "documentation,auto-generated" || true
+          fi
         fi
       env:
         GH_TOKEN: ${{ inputs.github-token }}

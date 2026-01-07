@@ -1,4 +1,5 @@
 name: Automated Code Review
+run-name: AI Review - ${{ github.event.pull_request.title || github.ref_name }}
 
 on:
   pull_request:
@@ -12,15 +13,10 @@ on:
       - main
       - develop
 
-# Prevent multiple runs for the same PR
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-env:
-  NODE_VERSION: '18'
-  PNPM_VERSION: '9'
-  COVERAGE_THRESHOLD: 80
+# Skip this workflow for the infrastructure repo itself
+# It only contains shared actions/workflows, not the actual project code
+# that requires pnpm install, linting, or testing.
+permissions: read-all
 
 jobs:
   # ============================================
@@ -29,6 +25,7 @@ jobs:
 
   lint:
     name: Lint Check
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -91,6 +88,7 @@ jobs:
 
   type-check:
     name: TypeScript Type Check
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -155,6 +153,7 @@ jobs:
 
   complexity-analysis:
     name: Code Complexity Analysis
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -247,6 +246,7 @@ jobs:
 
   test:
     name: Test Suite
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -411,6 +411,7 @@ jobs:
 
   build:
     name: Build Verification
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -524,6 +525,7 @@ jobs:
 
   security:
     name: Security Scan
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

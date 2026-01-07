@@ -10,9 +10,14 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# Skip this workflow for the infrastructure repo itself
+# as it doesn't contain the actual codebase.
+permissions: read-all
+
 jobs:
   security-audit:
     name: Security Audit
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
 
     steps:
@@ -113,6 +118,7 @@ jobs:
 
   dependency-check:
     name: Dependency Check
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
 
     steps:
@@ -147,6 +153,7 @@ jobs:
 
   architecture-compliance:
     name: Architecture Compliance
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
 
     steps:
@@ -222,6 +229,7 @@ jobs:
 
   bundle-size-check:
     name: Bundle Size Check
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
 
     steps:
@@ -291,6 +299,7 @@ jobs:
 
   code-quality:
     name: Code Quality Metrics
+    if: github.repository != 'ROTA-edu/.github'
     runs-on: ubuntu-latest
 
     steps:
