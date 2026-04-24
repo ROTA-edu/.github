@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/ROTA-edu/.github/main/profile/banner.png" width="100%" alt="ROTA Education Banner">
+  <img width="1536" height="1024" alt="988A372B-3A07-4B02-8DDE-6FE2C5352455" src="https://github.com/user-attachments/assets/bf310c65-79c6-4a29-b9e9-cc7f13664c7e" />
 
   ```text
   ██████╗  ██████╗ ████████╗ █████╗ 
